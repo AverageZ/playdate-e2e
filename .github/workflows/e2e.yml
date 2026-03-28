@@ -1,0 +1,51 @@
+# Example CI workflow for running playdate-e2e tests on GitHub Actions.
+# Copy this into your game project and adjust the build steps for your game.
+#
+# Requirements:
+#   - PLAYDATE_SDK_PATH is set by setup-playdate-sdk
+#   - Your game must compile with pdk_e2e linked (simulator builds only)
+#
+# Platform notes:
+#   - macOS: works out of the box (emulated display server on GitHub runners)
+#   - Linux: blocked — simulator hangs under xvfb, no headless mode exists
+#   - Windows: likely works but less community-tested
+
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pd-rs/setup-playdate-sdk@main
+
+      # Suppress the email signup popup that blocks unattended simulator runs
+      - name: Configure simulator for CI
+        run: defaults write date.play.simulator elistShown -bool YES
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build test runner
+        run: pnpm build
+
+      - name: Build game (with pdk_e2e)
+        run: make
+
+      - name: Run e2e tests
+        run: pnpm vitest run e2e/

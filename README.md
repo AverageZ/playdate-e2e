@@ -293,6 +293,27 @@ class PlaydateGame {
 // Linux:   $PLAYDATE_SDK_PATH/bin/PlaydateSimulator
 ```
 
+### CI / Headless testing
+
+The Playdate Simulator is a GUI application — there is no official `--headless` flag. CI feasibility depends on the runner's display environment:
+
+| Platform    | CI support       | Notes                                                                                                                  |
+| ----------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **macOS**   | **Works**        | GitHub Actions macOS runners have an emulated display server. Primary CI target.                                       |
+| **Windows** | **Likely works** | Similar display support, less community-tested.                                                                        |
+| **Linux**   | **Blocked**      | xvfb [hangs the simulator](https://devforum.play.date/t/simulator-hangs-in-xvfb/10796). No workaround currently known. |
+
+**Recommended setup** (macOS GitHub Actions):
+
+1. Install the SDK with [`setup-playdate-sdk`](https://github.com/marketplace/actions/setup-playdate-sdk)
+2. Suppress the email signup popup that blocks unattended runs:
+   ```bash
+   defaults write date.play.simulator elistShown -bool YES
+   ```
+3. Build your game with `pdk_e2e` linked, then run tests normally
+
+See [`.github/workflows/e2e.yml`](.github/workflows/e2e.yml) for a complete example workflow.
+
 ### Screenshot comparison
 
 - First run: no reference → save captured frame as reference PNG

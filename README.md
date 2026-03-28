@@ -397,8 +397,8 @@ See [`.github/workflows/e2e.yml`](.github/workflows/e2e.yml) for a complete exam
 - First run: no reference → save captured frame as reference PNG
 - Subsequent runs: XOR raw framebuffers, count differing bits
 - Default threshold: 0 (exact match — viable because 1-bit is deterministic)
-- `--update-snapshots` flag to regenerate references
 - On failure: generate diff PNG showing changed pixels
+- Optional tolerance: `maxDiffPixels` parameter for screens with random content
 
 ### Snapshot storage
 
@@ -410,6 +410,44 @@ e2e/
   __screenshots__/diff/         # generated on failure only
     title-screen-diff.png
 ```
+
+Reference PNGs are committed to the repo — 1-bit 400×240 images are ~1-3KB each, so 50 screenshots ≈ 50-150KB. Diff PNGs are `.gitignore`d.
+
+### Snapshot update workflow
+
+Snapshot updates use vitest's native `--update` flag. No custom CLI flags or environment variables.
+
+**Update all snapshots in a run:**
+
+```bash
+vitest run e2e/ --update
+```
+
+**Update a single test file's snapshots:**
+
+```bash
+vitest run e2e/title.test.ts --update
+```
+
+**Update a single test's snapshot:**
+
+```bash
+vitest run e2e/title.test.ts -t "shows title screen" --update
+```
+
+**How it works:** `toMatchScreenshot()` detects update mode via vitest's `globalSetup` and `provide`/`inject`:
+
+```typescript
+// vitest.globalSetup.ts
+export default function setup({ config, provide }) {
+  provide('updateSnapshots', config.snapshotOptions?.updateSnapshot === 'all');
+}
+
+// Inside toMatchScreenshot() — uses inject('updateSnapshots') to decide
+// whether to overwrite the reference PNG or compare against it.
+```
+
+**First-run behavior:** When no reference PNG exists, the captured frame is saved as the new reference. The test passes and logs: `Screenshot "title-screen" created (no reference existed)`. This matches vitest's convention for new snapshots.
 
 ---
 

@@ -8,3 +8,4 @@ compile_commands.json
 .DS_Store
 .vscode/
 .eslintcache
+__screenshots__/diff/

@@ -203,6 +203,41 @@ Binary, length-prefixed messages over TCP. No HTTP parsing needed in C.
 | 0x04 | QUERY_STATE   | null-terminated name string             |
 | 0x05 | RELEASE_INPUT | (empty)                                 |
 
+#### INJECT_INPUT payload (0x03)
+
+**Button bitmask** (1 byte) — each bit maps to one button:
+
+| Bit   | Value  | Button |
+| ----- | ------ | ------ |
+| 0     | 0x01   | A      |
+| 1     | 0x02   | B      |
+| 2     | 0x04   | Up     |
+| 3     | 0x08   | Down   |
+| 4     | 0x10   | Left   |
+| 5     | 0x20   | Right  |
+| 6–7   | —      | Reserved (must be 0) |
+
+Multiple buttons: OR the values together. Example: A + Up = `0x01 | 0x04` = `0x05`.
+
+**Crank angle** (4 bytes, float32 little-endian) — absolute angle in degrees.
+
+- Valid range: `0.0` – `359.99` (maps to `getCrankAngle()` on the Playdate)
+- Sentinel value: `-1.0` means "no crank injection" — `pdk_e2e_crank()` passes through the real hardware crank angle
+- **Delta warning:** Games that use `getCrankChange()` (delta) instead of `getCrankAngle()` (absolute) will see a large instantaneous delta on the first frame of injection (e.g., real angle 0° → injected 180° = +180° change). Use small incremental angle steps to avoid this, or use the TS-side `rotateCrank(delta)` helper.
+
+Response: INPUT_ACK (0x83).
+
+#### RELEASE_INPUT semantics (0x05)
+
+Clears **all** injected input state:
+
+- Button bitmask resets to 0 — `pdk_e2e_get_buttons()` passes through real `getButtonState()` values
+- Crank sentinel resets to -1.0 — `pdk_e2e_crank()` returns real hardware crank angle
+
+After RELEASE_INPUT, the game behaves as if no input injection has occurred. Use between tests within a suite to reset state.
+
+Response: INPUT_ACK (0x83).
+
 ### Responses (Game → Runner)
 
 | Byte | Name            | Payload                                                                |
@@ -214,6 +249,23 @@ Binary, length-prefixed messages over TCP. No HTTP parsing needed in C.
 | 0x85 | STATE_NOT_FOUND | (empty)                                                                |
 | 0xFE | READY           | (empty) — sent once on connection                                      |
 | 0xFF | ERROR           | null-terminated string                                                 |
+
+### Frame synchronization (PING/PONG)
+
+PING/PONG provides **frame-level synchronization** between the runner and the game. This is the core mechanism for deterministic test timing — it counts _game frames_, not wall-clock time.
+
+**Protocol:**
+
+1. Runner sends PING (0x01)
+2. Game's `pdk_e2e_update()` receives PING during the current frame
+3. Game sends PONG (0x81) after processing the frame
+4. Runner receives PONG — one game frame has elapsed
+
+**One PING/PONG round-trip = exactly one game frame**, regardless of the game's refresh rate or simulator CPU load. The runner must wait for PONG before sending the next PING.
+
+**`waitFrames(n)` implementation:** Send PING, wait for PONG, repeat `n` times. Each iteration advances the game by exactly one frame.
+
+**Constraint:** Since `pdk_e2e_update()` processes at most one command per frame, a PING arriving in the same frame as another command will be queued and processed next frame.
 
 ### Framebuffer encoding
 
@@ -282,6 +334,7 @@ class PlaydateGame {
   async dpadLeft(): Promise<void>;
   async dpadRight(): Promise<void>;
   async setCrank(angle: number): Promise<void>;
+  async rotateCrank(delta: number): Promise<void>; // TS-side: tracks last angle, sends INJECT_INPUT(lastAngle + delta)
   async pressButtons(...buttons: PlaydateButton[]): Promise<void>;
   async releaseInput(): Promise<void>;
   async tap(button: PlaydateButton, holdFrames?: number): Promise<void>;

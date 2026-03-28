@@ -110,14 +110,14 @@ These are built on the same PING/PONG mechanism: each frame, the runner captures
 
 ```c
 // In update():
+pdk_e2e_update();  // process TCP commands (may set injected input state)
 PDButtons pushed;
-pd->system->getButtonState(NULL, &pushed, NULL);
-pushed |= pdk_e2e_update();  // ← OR in injected buttons BEFORE using them
+pdk_e2e_get_buttons(NULL, &pushed, NULL);  // returns real | injected buttons
 ```
 
-If the developer calls `pdk_e2e_update()` at the end of their update function, injected input is delayed by one frame. This is a developer error, not a framework bug — but the error message should diagnose it.
+`pdk_e2e_update()` returns `void` — it processes TCP commands and updates internal injection state. `pdk_e2e_get_buttons()` then reads the combined real + injected button state. If the developer calls `pdk_e2e_update()` at the end of their update function, injected input is delayed by one frame. This is a developer error, not a framework bug — but the error message should diagnose it.
 
-**Crank injection edge case:** Games that use `getCrankChange()` (delta) rather than `getCrankAngle()` (absolute) will see a large delta on the first frame of injection (e.g., 0° → 180° = +180° change). The framework injects absolute angles — games must account for this in their test harness by using absolute angle reads, or by moving the crank in small increments.
+**Crank injection edge case:** Games that use `getCrankChange()` (delta) rather than `getCrankAngle()` (absolute) will see a large delta on the first frame of injection (e.g., 0° → 180° = +180° change). The framework injects absolute angles — games must account for this in their test harness by using absolute angle reads, or by using the TS-side `rotateCrank(delta)` helper which sends small incremental angles.
 
 ---
 

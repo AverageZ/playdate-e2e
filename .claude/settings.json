@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "0"
+  },
+  "permissions": {
+    "allow": [
+      "Read(//Users/alexzajac/projects/strategy-game/**)",
+      "Bash(gh label:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_FILE_PATHS\" | grep -qE '\\.(c|h)$'; then make -C /Users/alexzajac/projects/finch format 2>&1; fi",
+            "statusMessage": "Formatting C files"
+          }
+        ]
+      }
+    ]
+  }
+}

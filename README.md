@@ -1,10 +1,10 @@
 # playdate-e2e — End-to-End Testing for Playdate Games
 
-First open-source e2e testing library for the Playdate handheld. Two packages: a C drop-in module (game side) and a TypeScript test runner (dev side).
+Open-source e2e testing library for the Playdate handheld. Works with both C and Lua games. Two packages: a game-side module (C drop-in or Lua C extension) and a TypeScript test runner (dev side).
 
 ## Why This Exists
 
-Playdate developers have unit tests and property-based tests for pure logic, but no way to test "when I press A on the title screen, the game starts." The community has been requesting simulator automation — this fills that gap.
+Playdate developers have unit tests and property-based tests for pure logic, but no way to test "when I press A on the title screen, the game starts." The community has been requesting simulator automation, hopefully this fills that gap.
 
 ## Architecture
 
@@ -26,9 +26,9 @@ Playdate developers have unit tests and property-based tests for pure logic, but
 
 ## Two Testing Layers
 
-### Layer 1: Visual assertions (zero game code changes)
+### Layer 1: Visual assertions (minimal setup)
 
-Capture the framebuffer and compare against saved PNGs. Works out of the box for any Playdate game.
+Capture the framebuffer and compare against saved PNGs. Requires a small harness (3 lines in C, or 1 guarded call in Lua) but no changes to game logic.
 
 ```typescript
 await game.pressA();
@@ -107,6 +107,78 @@ pushed |= pdk_e2e_update();                        // OR in injected buttons
 float crank = pdk_e2e_crank();                      // check for injected crank
 if (crank < 0) crank = pd->system->getCrankAngle(); // fallback to real crank
 ```
+
+---
+
+## Lua Module: `pdk_e2e_ext.c`
+
+A C extension that reuses all `pdk_e2e.h` internals but registers functions into the Lua runtime via `kEventInitLua`. The Playdate SDK's TCP, framebuffer, and input APIs are C-only, so a C extension is the only viable path for Lua games — but Lua devs never touch C directly.
+
+### How it works
+
+The C extension's `eventHandler` handles two events:
+
+- **`kEventInit`** — stores `PlaydateAPI*`, opens TCP connection (same as pure-C path)
+- **`kEventInitLua`** — calls `pd->lua->addFunction()` to register the `playdate.e2e.*` namespace into the Lua runtime. Does NOT call `setUpdateCallback` — Lua owns the update loop.
+
+### Device builds — compiles out cleanly
+
+The C extension wraps all `addFunction()` calls in `#if TARGET_SIMULATOR`. On device builds, the `playdate.e2e` namespace is never registered. The Lua guard `if playdate.e2e then` evaluates to `nil` (falsy) and the call is skipped — zero overhead, no crash.
+
+### Lua API
+
+```lua
+-- Layer 1: poll commands, inject input, capture framebuffer
+playdate.e2e.update()
+
+-- Layer 1: get injected crank angle, or -1.0 for real crank
+playdate.e2e.crank()
+
+-- Layer 2: expose game state via callback (type inferred from return value)
+playdate.e2e.expose(name, callback)
+```
+
+### Layer 2: State exposure for Lua
+
+C pointer-based `pdk_e2e_expose_int("score", &ptr)` can't work for Lua values (they live on the Lua stack, not at fixed C addresses). Instead, Lua devs register a callback:
+
+```lua
+playdate.e2e.expose("score", function() return gameState.score end)
+playdate.e2e.expose("level", function() return gameState.currentLevel end)
+```
+
+When a `QUERY_STATE` command arrives over TCP, the C extension dispatches to a Lua-side lookup table, reads the return value, infers the type (int/float/string), and sends the `STATE_VALUE` response. Same wire protocol — the TypeScript runner has no idea whether the game is C or Lua.
+
+### Game integration (1 guarded call in playdate.update)
+
+```lua
+local gfx <const> = playdate.graphics
+
+function playdate.update()
+    if playdate.e2e then playdate.e2e.update() end
+    gfx.sprite.update()
+    -- ... rest of game
+end
+
+-- Optional: Layer 2 state exposure
+if playdate.e2e then
+    playdate.e2e.expose("score", function() return gameState.score end)
+end
+```
+
+### Build integration
+
+Lua games that include C extensions use the SDK's CMake template, which already supports mixed Lua+C builds. Add `pdk_e2e.c` and `pdk_e2e_ext.c` to the source list:
+
+```cmake
+# In CMakeLists.txt
+add_executable(${PLAYDATE_GAME_NAME}
+    src/pdk_e2e.c
+    src/pdk_e2e_ext.c
+)
+```
+
+Alternatively, pre-built binaries (`pdex.dylib`/`pdex.so`/`pdex.dll`) could be distributed for devs who don't want to compile C at all.
 
 ---
 
@@ -296,6 +368,55 @@ export async function skipPrologue(game: PlaydateGame): Promise<void> {
 
 ---
 
+## Example: Lua game "Cranky Birds"
+
+The TypeScript test side is identical — the runner doesn't know or care if the game is C or Lua.
+
+```typescript
+import { describe, it, afterEach } from 'vitest';
+import { PlaydateGame } from 'playdate-e2e';
+
+describe('Cranky Birds', () => {
+  let game: PlaydateGame;
+  afterEach(async () => await game?.close());
+
+  it('launches to the title screen and starts a round', async () => {
+    game = await PlaydateGame.launch('../CrankyBirds.pdx');
+
+    await game.toMatchScreenshot('title-screen');
+
+    await game.pressA();
+    await game.waitFrames(30);
+    await game.toMatchScreenshot('round-1-start');
+
+    // Layer 2: query Lua-exposed state
+    const score = await game.queryInt('score');
+    expect(score).toBe(0);
+  }, 15_000);
+});
+```
+
+The Lua game side:
+
+```lua
+local gfx <const> = playdate.graphics
+
+local gameState = { score = 0, level = 1 }
+
+function playdate.update()
+    if playdate.e2e then playdate.e2e.update() end
+    gfx.sprite.update()
+end
+
+-- Layer 2: expose state for test assertions
+if playdate.e2e then
+    playdate.e2e.expose("score", function() return gameState.score end)
+    playdate.e2e.expose("level", function() return gameState.level end)
+end
+```
+
+---
+
 ## Open Questions
 
 1. **Network access prompt** — `tcp->requestAccess()` may show a dialog on first use. Need to verify if it's remembered across sessions or if there's an auto-approve mechanism for simulator builds. If it blocks, tests can't run unattended.
@@ -310,13 +431,20 @@ export async function skipPrologue(game: PlaydateGame): Promise<void> {
 
 6. **Multiple commands per frame** — current design: one command per `pdk_e2e_update()` call (one per frame at 30fps). May be slow for screenshot-heavy tests. Could batch, but risks blocking the game loop.
 
+7. **Lua input injection propagation** — C games OR injected buttons directly into `getButtonState()`. Lua games use `playdate.buttonJustPressed()` etc. Does C-level button state manipulation propagate to these Lua APIs? If not, a Lua-side input wrapper is needed.
+
+8. **Lua C extension conflicts** — if a Lua game already has its own C extension (`eventHandler` in a `.c` file), adding `pdk_e2e_ext.c` creates a duplicate symbol. Need to document how to merge `eventHandler` functions, or provide `pdk_e2e_ext.h` as an includable header instead of a standalone entry point.
+
+9. **Pre-built binaries for Lua devs** — should pre-compiled `pdex.dylib`/`pdex.so`/`pdex.dll` be distributed via GitHub releases so Lua-only devs never need a C toolchain? Or is source compilation (via the SDK's CMake template) sufficient?
+
 ## Implementation Phases
 
-| Phase | What                                                                               | Days |
-| ----- | ---------------------------------------------------------------------------------- | ---- |
-| 1     | Wire protocol + TCP connection (C state machine + TS server + PING/PONG)           | 1-2  |
-| 2     | Framebuffer capture (C getDisplayFrame + TS decode to PNG + snapshot compare)      | 1    |
-| 3     | Input injection (C button/crank injection + TS helpers + waitFrames via PING/PONG) | 1    |
-| 4     | State exposure (C registry + TS query methods)                                     | 0.5  |
-| 5     | Simulator lifecycle (cross-platform launch/close + PlaydateGame.launch())          | 0.5  |
-| 6     | Polish (--update-snapshots, diff images, README, package.json)                     | 1    |
+| Phase | What                                                                                 | Days |
+| ----- | ------------------------------------------------------------------------------------ | ---- |
+| 1     | Wire protocol + TCP connection (C state machine + TS server + PING/PONG)             | 1-2  |
+| 2     | Framebuffer capture (C getDisplayFrame + TS decode to PNG + snapshot compare)        | 1    |
+| 3     | Input injection (C button/crank injection + TS helpers + waitFrames via PING/PONG)   | 1    |
+| 3.5   | Lua C extension (`pdk_e2e_ext.c` + `kEventInitLua` registration + Lua input test)    | 1    |
+| 4     | State exposure (C pointer registry + Lua callback dispatch + TS query methods)       | 0.5  |
+| 5     | Simulator lifecycle (cross-platform launch/close + PlaydateGame.launch())            | 0.5  |
+| 6     | Polish (--update-snapshots, diff images, Lua docs, pre-built binaries, package.json) | 1    |

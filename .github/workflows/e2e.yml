@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pd-rs/setup-playdate-sdk@main
+      - uses: pd-rs/get-playdate-sdk@main
 
       # Suppress the email signup popup that blocks unattended simulator runs
       - name: Configure simulator for CI

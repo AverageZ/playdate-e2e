@@ -24,6 +24,8 @@ Playdate developers have unit tests and property-based tests for pure logic, but
 
 **Key advantage**: 1-bit 400×240 display = deterministic pixels. No anti-aliasing, no subpixel rendering. Screenshot comparison is exact — drastically more reliable than browser screenshot testing.
 
+**Non-determinism**: The 1-bit display eliminates rendering variance, but frame timing, TCP framing, and simulator lifecycle still introduce non-determinism in tests. The library mitigates these with frame-synced PING/PONG, length-prefixed binary framing, and conditional wait APIs. See [NONDETERMINISM.md](NONDETERMINISM.md) for the full analysis and mitigation strategy.
+
 ## Two Testing Layers
 
 ### Layer 1: Visual assertions (minimal setup)
@@ -276,6 +278,18 @@ class PlaydateGame {
   // Timing
   async waitFrames(n: number): Promise<void>; // frame-synced via PING/PONG
   async waitMs(ms: number): Promise<void>;
+
+  // Conditional waits (preferred over waitFrames for non-deterministic timing)
+  async waitUntilScreenChanges(options?: { timeout?: number }): Promise<void>;
+  async waitUntilState<T extends number | string>(
+    name: string,
+    predicate: (value: T) => boolean,
+    options?: { timeout?: number },
+  ): Promise<T>;
+  async waitUntilStable(options?: {
+    settleFrames?: number;
+    timeout?: number;
+  }): Promise<void>;
 
   // State queries (requires pdk_e2e_expose_* in game)
   async queryInt(name: string): Promise<number>;

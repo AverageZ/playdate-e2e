@@ -27,6 +27,7 @@ Playdate developers have unit tests and property-based tests for pure logic, but
 ## Two Testing Layers
 
 ### Layer 1: Visual assertions (zero game code changes)
+
 Capture the framebuffer and compare against saved PNGs. Works out of the box for any Playdate game.
 
 ```typescript
@@ -36,12 +37,14 @@ await game.toMatchScreenshot('title-screen');
 ```
 
 ### Layer 2: State assertions (opt-in)
+
 Developer registers named values. Tests query exact numbers.
 
 ```c
 // game side — optional
 pdk_e2e_expose_int("score", &ctx->playerPoints);
 ```
+
 ```typescript
 // test side
 const score = await game.queryInt('score');
@@ -117,25 +120,25 @@ Binary, length-prefixed messages over TCP. No HTTP parsing needed in C.
 
 ### Commands (Runner → Game)
 
-| Byte | Name | Payload |
-|------|------|---------|
-| 0x01 | PING | (empty) |
-| 0x02 | CAPTURE_FRAME | (empty) |
-| 0x03 | INJECT_INPUT | 1B button bitmask + 4B crank float32 LE |
-| 0x04 | QUERY_STATE | null-terminated name string |
-| 0x05 | RELEASE_INPUT | (empty) |
+| Byte | Name          | Payload                                 |
+| ---- | ------------- | --------------------------------------- |
+| 0x01 | PING          | (empty)                                 |
+| 0x02 | CAPTURE_FRAME | (empty)                                 |
+| 0x03 | INJECT_INPUT  | 1B button bitmask + 4B crank float32 LE |
+| 0x04 | QUERY_STATE   | null-terminated name string             |
+| 0x05 | RELEASE_INPUT | (empty)                                 |
 
 ### Responses (Game → Runner)
 
-| Byte | Name | Payload |
-|------|------|---------|
-| 0x81 | PONG | (empty) |
-| 0x82 | FRAME_DATA | 12,480 bytes raw framebuffer (52 bytes/row × 240 rows, MSB-first bits) |
-| 0x83 | INPUT_ACK | (empty) |
-| 0x84 | STATE_VALUE | 1B type tag (0=int32, 1=float32, 2=string) + value |
-| 0x85 | STATE_NOT_FOUND | (empty) |
-| 0xFE | READY | (empty) — sent once on connection |
-| 0xFF | ERROR | null-terminated string |
+| Byte | Name            | Payload                                                                |
+| ---- | --------------- | ---------------------------------------------------------------------- |
+| 0x81 | PONG            | (empty)                                                                |
+| 0x82 | FRAME_DATA      | 12,480 bytes raw framebuffer (52 bytes/row × 240 rows, MSB-first bits) |
+| 0x83 | INPUT_ACK       | (empty)                                                                |
+| 0x84 | STATE_VALUE     | 1B type tag (0=int32, 1=float32, 2=string) + value                     |
+| 0x85 | STATE_NOT_FOUND | (empty)                                                                |
+| 0xFE | READY           | (empty) — sent once on connection                                      |
+| 0xFF | ERROR           | null-terminated string                                                 |
 
 ### Framebuffer encoding
 
@@ -174,12 +177,18 @@ playdate-e2e/
 ```typescript
 class PlaydateGame {
   // Lifecycle
-  static async launch(pdxPath: string, options?: { port?: number; timeout?: number }): Promise<PlaydateGame>;
+  static async launch(
+    pdxPath: string,
+    options?: { port?: number; timeout?: number },
+  ): Promise<PlaydateGame>;
   async close(): Promise<void>;
 
   // Screenshots
   async screenshot(): Promise<Buffer>;
-  async toMatchScreenshot(name: string, options?: { maxDiffPixels?: number }): Promise<void>;
+  async toMatchScreenshot(
+    name: string,
+    options?: { maxDiffPixels?: number },
+  ): Promise<void>;
 
   // Input
   async pressA(): Promise<void>;
@@ -193,7 +202,7 @@ class PlaydateGame {
   async tap(button: PlaydateButton, holdFrames?: number): Promise<void>;
 
   // Timing
-  async waitFrames(n: number): Promise<void>;  // frame-synced via PING/PONG
+  async waitFrames(n: number): Promise<void>; // frame-synced via PING/PONG
   async waitMs(ms: number): Promise<void>;
 
   // State queries (requires pdk_e2e_expose_* in game)
@@ -258,10 +267,10 @@ describe('Prologue to Tournament', () => {
     }
 
     await game.toMatchScreenshot('mount-up');
-    await game.setCrank(0);       // undock crank
+    await game.setCrank(0); // undock crank
     await game.waitFrames(10);
     await game.pressA();
-    await game.waitFrames(60);    // visor closing animation
+    await game.waitFrames(60); // visor closing animation
 
     await game.toMatchScreenshot('tournament-start');
   }, 30_000);
@@ -303,11 +312,11 @@ export async function skipPrologue(game: PlaydateGame): Promise<void> {
 
 ## Implementation Phases
 
-| Phase | What | Days |
-|-------|------|------|
-| 1 | Wire protocol + TCP connection (C state machine + TS server + PING/PONG) | 1-2 |
-| 2 | Framebuffer capture (C getDisplayFrame + TS decode to PNG + snapshot compare) | 1 |
-| 3 | Input injection (C button/crank injection + TS helpers + waitFrames via PING/PONG) | 1 |
-| 4 | State exposure (C registry + TS query methods) | 0.5 |
-| 5 | Simulator lifecycle (cross-platform launch/close + PlaydateGame.launch()) | 0.5 |
-| 6 | Polish (--update-snapshots, diff images, README, package.json) | 1 |
+| Phase | What                                                                               | Days |
+| ----- | ---------------------------------------------------------------------------------- | ---- |
+| 1     | Wire protocol + TCP connection (C state machine + TS server + PING/PONG)           | 1-2  |
+| 2     | Framebuffer capture (C getDisplayFrame + TS decode to PNG + snapshot compare)      | 1    |
+| 3     | Input injection (C button/crank injection + TS helpers + waitFrames via PING/PONG) | 1    |
+| 4     | State exposure (C registry + TS query methods)                                     | 0.5  |
+| 5     | Simulator lifecycle (cross-platform launch/close + PlaydateGame.launch())          | 0.5  |
+| 6     | Polish (--update-snapshots, diff images, README, package.json)                     | 1    |

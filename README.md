@@ -30,7 +30,7 @@ Playdate developers have unit tests and property-based tests for pure logic, but
 
 ### Layer 1: Visual assertions (minimal setup)
 
-Capture the framebuffer and compare against saved PNGs. Requires a small harness (3 lines in C, or 1 guarded call in Lua) but no changes to game logic.
+Capture the framebuffer and compare against saved PNGs. Requires a small C harness — one init call plus drop-in replacements for `getButtonState()` and `getCrankAngle()` — or 1 guarded call in Lua. No changes to game logic (you swap two SDK calls for drop-in replacements).
 
 ```typescript
 await game.pressA();
@@ -64,8 +64,9 @@ Lives in pd-kit. Follows existing conventions: `pdk_` prefix, file-scoped static
 ```c
 #if !TARGET_SIMULATOR
 #define pdk_e2e_init(pd, port)           ((void)0)
-#define pdk_e2e_update()                 ((PDButtons)0)
-#define pdk_e2e_crank()                  (-1.0f)
+#define pdk_e2e_update()                 ((void)0)
+#define pdk_e2e_get_buttons(c, p, r)     pd->system->getButtonState(c, p, r)
+#define pdk_e2e_crank()                  (pd->system->getCrankAngle())
 #define pdk_e2e_expose_int(name, ptr)    ((void)0)
 #define pdk_e2e_expose_float(name, ptr)  ((void)0)
 #define pdk_e2e_expose_string(name, ptr) ((void)0)
@@ -76,8 +77,9 @@ Lives in pd-kit. Follows existing conventions: `pdk_` prefix, file-scoped static
 
 ```c
 void pdk_e2e_init(PlaydateAPI *pd, int port);    // connect to runner's TCP server
-PDButtons pdk_e2e_update(void);                   // poll commands, return injected buttons
-float pdk_e2e_crank(void);                        // return injected crank or -1.0f
+void pdk_e2e_update(void);                            // poll and process TCP commands
+void pdk_e2e_get_buttons(PDButtons *current, PDButtons *pushed, PDButtons *released);  // drop-in for getButtonState(), ORs in injected buttons
+float pdk_e2e_crank(void);                        // return injected crank, or real crank if none injected
 void pdk_e2e_expose_int(const char *name, const int *ptr);
 void pdk_e2e_expose_float(const char *name, const float *ptr);
 void pdk_e2e_expose_string(const char *name, const char **ptr);
@@ -91,9 +93,9 @@ REQUESTING_ACCESS → WAITING_ACCESS → CONNECTING → WAITING_CONNECT → CONN
                                                               (sends READY 0xFE)
 ```
 
-Uses `pd->network->tcp->requestAccess()` → `newConnection()` → `open()`. On `CONNECTED`, sends READY. Each frame, `pdk_e2e_update()` checks `getBytesAvailable()` and processes one command.
+Uses `pd->network->tcp->requestAccess()` → `newConnection()` → `open()`. On `CONNECTED`, sends READY. Each frame, `pdk_e2e_update()` checks `getBytesAvailable()` and processes one command. `pdk_e2e_get_buttons()` wraps `pd->system->getButtonState()` and ORs in any injected buttons. `pdk_e2e_crank()` returns the injected crank angle if set, otherwise the real crank angle.
 
-### Game integration (3 lines in main.c)
+### Game integration
 
 ```c
 #include "pdk_e2e.h"
@@ -102,12 +104,11 @@ Uses `pd->network->tcp->requestAccess()` → `newConnection()` → `open()`. On 
 pdk_e2e_init(pd, 54321);
 
 // In update():
-PDButtons pushed;
-pd->system->getButtonState(NULL, &pushed, NULL);
-pushed |= pdk_e2e_update();                        // OR in injected buttons
+pdk_e2e_update();                              // process TCP commands
 
-float crank = pdk_e2e_crank();                      // check for injected crank
-if (crank < 0) crank = pd->system->getCrankAngle(); // fallback to real crank
+PDButtons pushed;
+pdk_e2e_get_buttons(NULL, &pushed, NULL);      // drop-in for pd->system->getButtonState()
+float crank = pdk_e2e_crank();                 // drop-in for pd->system->getCrankAngle()
 ```
 
 ---
@@ -133,7 +134,7 @@ The C extension wraps all `addFunction()` calls in `#if TARGET_SIMULATOR`. On de
 -- Layer 1: poll commands, inject input, capture framebuffer
 playdate.e2e.update()
 
--- Layer 1: get injected crank angle, or -1.0 for real crank
+-- Layer 1: get injected crank angle, or real crank if none injected
 playdate.e2e.crank()
 
 -- Layer 2: expose game state via callback (type inferred from return value)
@@ -233,7 +234,7 @@ playdate-e2e/
       TcpServer.ts           # TCP server, waits for game connection
       Protocol.ts            # message encode/decode
     input/
-      InputHelpers.ts        # pressA(), dpadUp(), setCrank(), tap()
+      InputHelpers.ts        # pressA(), dpadUp(), setCrank(), pressButtons(), tap()
     assert/
       Screenshot.ts          # toMatchScreenshot() with snapshot mgmt
       FrameBuffer.ts         # decode 1-bit framebuffer ↔ PNG
@@ -249,6 +250,15 @@ playdate-e2e/
 ### Public API
 
 ```typescript
+enum PlaydateButton {
+  A     = 0x01,
+  B     = 0x02,
+  Up    = 0x04,
+  Down  = 0x08,
+  Left  = 0x10,
+  Right = 0x20,
+}
+
 class PlaydateGame {
   // Lifecycle
   static async launch(
@@ -272,6 +282,7 @@ class PlaydateGame {
   async dpadLeft(): Promise<void>;
   async dpadRight(): Promise<void>;
   async setCrank(angle: number): Promise<void>;
+  async pressButtons(...buttons: PlaydateButton[]): Promise<void>;
   async releaseInput(): Promise<void>;
   async tap(button: PlaydateButton, holdFrames?: number): Promise<void>;
 
@@ -466,7 +477,7 @@ end
 
 6. **Multiple commands per frame** — current design: one command per `pdk_e2e_update()` call (one per frame at 30fps). May be slow for screenshot-heavy tests. Could batch, but risks blocking the game loop.
 
-7. **Lua input injection propagation** — C games OR injected buttons directly into `getButtonState()`. Lua games use `playdate.buttonJustPressed()` etc. Does C-level button state manipulation propagate to these Lua APIs? If not, a Lua-side input wrapper is needed.
+7. **Lua input injection propagation** — C games use `pdk_e2e_get_buttons()` which wraps `getButtonState()` and ORs in injected buttons internally. Lua games use `playdate.buttonJustPressed()` etc. Does C-level button state manipulation propagate to these Lua APIs? If not, a Lua-side input wrapper is needed.
 
 8. **Lua C extension conflicts** — if a Lua game already has its own C extension (`eventHandler` in a `.c` file), adding `pdk_e2e_ext.c` creates a duplicate symbol. Need to document how to merge `eventHandler` functions, or provide `pdk_e2e_ext.h` as an includable header instead of a standalone entry point.
 

@@ -15,20 +15,25 @@ Then proceed **inline** (no subagents):
 3. Propose the fix with this structure:
 
 ## Problem
+
 What the issue describes (1-2 sentences).
 
 ## Relevant code
+
 Files identified and key lines.
 
 ## Proposed fix
+
 Concrete code changes — show diffs or describe edits precisely.
 
 ## Verification
+
 How to test the fix (specific commands or manual steps).
 
 ---
 
 **Important constraints:**
+
 - Do NOT use the Task tool or spawn any agents
 - Do NOT use Explore, euler-solutions-agent, or any subagent
 - Keep it fast — read only what's needed, propose directly

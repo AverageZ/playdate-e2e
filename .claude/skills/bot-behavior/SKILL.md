@@ -23,20 +23,20 @@ The bot planner lives in `src/systems/bot-planner/`. Each bot unit has a `script
 
 ### Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/systems/bot-planner/BotBrain.ts` | Core brain: condition -> score -> select best -> execute |
-| `src/systems/bot-planner/index.ts` | Planner entry point, iterates units, creates BotBrain instances |
-| `src/systems/bot-planner/types.ts` | `MatchEffect` type for condition evaluators |
-| `src/systems/bot-planner/tacticGuards.ts` | Type guards and string parsers for tactic conditions |
-| `src/systems/bot-planner/defaultScripts.ts` | Default behavior scripts per `Behavior` type |
-| `src/systems/bot-planner/scoring/constants.ts` | All behavior weight constants |
-| `src/systems/bot-planner/scoring/createActionScore.ts` | Score factory function |
-| `src/type-definitions/tactics.ts` | All `Tactics` namespace types (conditions, actions, contexts) |
-| `src/state/game/botActions.ts` | Redux actions for bot operations (action/ok/err pattern) |
-| `src/systems/bot-planner/conditions/` | Condition evaluator implementations |
-| `src/systems/bot-planner/scoring/` | Scoring function implementations |
-| `src/systems/bot-planner/actions/` | Action saga implementations |
+| File                                                   | Purpose                                                         |
+| ------------------------------------------------------ | --------------------------------------------------------------- |
+| `src/systems/bot-planner/BotBrain.ts`                  | Core brain: condition -> score -> select best -> execute        |
+| `src/systems/bot-planner/index.ts`                     | Planner entry point, iterates units, creates BotBrain instances |
+| `src/systems/bot-planner/types.ts`                     | `MatchEffect` type for condition evaluators                     |
+| `src/systems/bot-planner/tacticGuards.ts`              | Type guards and string parsers for tactic conditions            |
+| `src/systems/bot-planner/defaultScripts.ts`            | Default behavior scripts per `Behavior` type                    |
+| `src/systems/bot-planner/scoring/constants.ts`         | All behavior weight constants                                   |
+| `src/systems/bot-planner/scoring/createActionScore.ts` | Score factory function                                          |
+| `src/type-definitions/tactics.ts`                      | All `Tactics` namespace types (conditions, actions, contexts)   |
+| `src/state/game/botActions.ts`                         | Redux actions for bot operations (action/ok/err pattern)        |
+| `src/systems/bot-planner/conditions/`                  | Condition evaluator implementations                             |
+| `src/systems/bot-planner/scoring/`                     | Scoring function implementations                                |
+| `src/systems/bot-planner/actions/`                     | Action saga implementations                                     |
 
 ### Behavior Types
 
@@ -47,6 +47,7 @@ Seven behaviors with distinct weight profiles defined in `scoring/constants.ts`:
 Each has different weights for: aggression, retreat urgency, item usage, taunt resistance, skill usage, coordination receptiveness, hazard tolerance, capture priority, and placement strategy.
 
 Weight design:
+
 - `0.0` = Cannot/Will Not (action impossible or completely out of character)
 - `1.0` = Neutral Baseline (maverick typically serves as reference)
 - `> 2.0` = Strong Preference (core personality trait)
@@ -60,9 +61,9 @@ Every scoring function returns `Tactics.ActionScore`:
 ```typescript
 {
   rawScore: number;
-  priority: ActionPriority;         // 'critical' | 'high' | 'normal' | 'low'
-  adjustedScore: number;            // rawScore * PRIORITY_MULTIPLIERS[priority]
-  reason: string;                   // Human-readable explanation
+  priority: ActionPriority; // 'critical' | 'high' | 'normal' | 'low'
+  adjustedScore: number; // rawScore * PRIORITY_MULTIPLIERS[priority]
+  reason: string; // Human-readable explanation
   components: Record<string, number>; // Breakdown for debugging
 }
 ```
@@ -74,6 +75,7 @@ Always use `createActionScore()` from `scoring/createActionScore.ts` to create s
 ### Coordination System
 
 Hero/pragmatist ("smart") units can broadcast `TargetRecommendation`s to nearby allies:
+
 - Influence radius = `sqrt(presenceScore) * COORDINATION_RADIUS_MULTIPLIER`
 - Receiving units get an engage score bonus capped at `MAX_RECOMMENDATION_BONUS`
 - Receptiveness varies by behavior (`RECOMMENDATION_RECEPTIVENESS` in constants)
@@ -149,6 +151,7 @@ When a unit has `target.intent === 'taunt'`, BotBrain injects a virtual `engage 
    - What each component represents
 
 3. **Track score components** in the `components` record for debugging:
+
    ```typescript
    const components: Record<string, number> = {};
    components.targetVulnerability = vulnerabilityScore;
@@ -220,15 +223,15 @@ Important: Use `mechanics-explainer` skill to confirm game mechanics
 
 ## Integration Points
 
-| System | How It Integrates |
-|--------|------------------|
-| Movement (`src/systems/game/movement/`) | Engage and retreat actions trigger movement |
-| Combat (`src/systems/combat/`) | Engage action triggers combat after movement |
-| Items (`src/state/items/`) | Consume and place item actions use item state |
-| Skills (`src/systems/game/skill-effects/`) | Use skill action triggers skill effects |
+| System                                                       | How It Integrates                                            |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| Movement (`src/systems/game/movement/`)                      | Engage and retreat actions trigger movement                  |
+| Combat (`src/systems/combat/`)                               | Engage action triggers combat after movement                 |
+| Items (`src/state/items/`)                                   | Consume and place item actions use item state                |
+| Skills (`src/systems/game/skill-effects/`)                   | Use skill action triggers skill effects                      |
 | Environmental Effects (`src/systems/environmental-effects/`) | Scoring evaluators check tile hazards via `HAZARD_TOLERANCE` |
-| Pathfinding (`src/utils/pathfinder/`) | Movement calculations for retreat, engage, pursue |
-| Win Conditions (`src/systems/conditions/`) | Capture condition feeds into pursue objective |
+| Pathfinding (`src/utils/pathfinder/`)                        | Movement calculations for retreat, engage, pursue            |
+| Win Conditions (`src/systems/conditions/`)                   | Capture condition feeds into pursue objective                |
 
 ## Testing Requirements
 

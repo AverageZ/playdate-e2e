@@ -276,6 +276,7 @@ await s2.when
 ```
 
 **Key rules:**
+
 - `.capture()` returns synchronously — never `await` the chain break
 - Each new scenario ref (`s2`) inherits all prior captures
 - Only reference captures from the scenario ref that has them in its type
@@ -290,13 +291,15 @@ let baseDamage = 0;
 await scenario.when
   .observe(async (context) => {
     baseDamage = parseInt(
-      await context.game.getCombatPreviewStat('attacker', 'damage'), 10,
+      await context.game.getCombatPreviewStat('attacker', 'damage'),
+      10,
     );
   })
   // ... later ...
   .when.observe(async (context) => {
     const damage = parseInt(
-      await context.game.getCombatPreviewStat('attacker', 'damage'), 10,
+      await context.game.getCombatPreviewStat('attacker', 'damage'),
+      10,
     );
     expect(damage).toBe(Math.round(baseDamage * 1.25)); // breaks if multiplier changes
   })
@@ -395,7 +398,7 @@ The DSL does NOT yet cover these — use page objects from `e2e/objects/shared/`
 - Scene Navigation → `Scene`
 - Storyline-specific levels
 
-Note: if you come across one of these, alert the user *immediately*
+Note: if you come across one of these, alert the user _immediately_
 
 ## Step 4: Run & Verify
 
@@ -423,6 +426,7 @@ If it fails:
    - **60s (`testInfo.setTimeout(60_000)`)**: Multiple turn cycles, familiar summoning + combat + heal sharing, complex talent synergy verification
 
    Only add timeouts for tests that genuinely need them. The Playwright default is 30s — match it explicitly for turn-based tests so intent is clear.
+
 5. Review error context in `test-results/{test-name}/error-context.md`
 6. Use `mechanics-explainer` skill to confirm game mechanics
 

@@ -6,7 +6,12 @@
   "permissions": {
     "allow": [
       "Read(//Users/alexzajac/projects/strategy-game/**)",
-      "Bash(gh label:*)"
+      "Bash(gh label:*)",
+      "Bash(pnpm type-check:*)",
+      "Bash(pnpm format:check)",
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm build:*)"
     ]
   },
   "hooks": {

@@ -1,7 +1,10 @@
 build/
+dist/
+node_modules/
 *.o
 *.d
 *.dSYM/
 compile_commands.json
 .DS_Store
 .vscode/
+.eslintcache

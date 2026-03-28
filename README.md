@@ -207,15 +207,15 @@ Binary, length-prefixed messages over TCP. No HTTP parsing needed in C.
 
 **Button bitmask** (1 byte) — each bit maps to one button:
 
-| Bit   | Value  | Button |
-| ----- | ------ | ------ |
-| 0     | 0x01   | A      |
-| 1     | 0x02   | B      |
-| 2     | 0x04   | Up     |
-| 3     | 0x08   | Down   |
-| 4     | 0x10   | Left   |
-| 5     | 0x20   | Right  |
-| 6–7   | —      | Reserved (must be 0) |
+| Bit | Value | Button               |
+| --- | ----- | -------------------- |
+| 0   | 0x01  | A                    |
+| 1   | 0x02  | B                    |
+| 2   | 0x04  | Up                   |
+| 3   | 0x08  | Down                 |
+| 4   | 0x10  | Left                 |
+| 5   | 0x20  | Right                |
+| 6–7 | —     | Reserved (must be 0) |
 
 Multiple buttons: OR the values together. Example: A + Up = `0x01 | 0x04` = `0x05`.
 
@@ -303,11 +303,11 @@ playdate-e2e/
 
 ```typescript
 enum PlaydateButton {
-  A     = 0x01,
-  B     = 0x02,
-  Up    = 0x04,
-  Down  = 0x08,
-  Left  = 0x10,
+  A = 0x01,
+  B = 0x02,
+  Up = 0x04,
+  Down = 0x08,
+  Left = 0x10,
   Right = 0x20,
 }
 

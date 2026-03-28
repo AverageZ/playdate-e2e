@@ -160,11 +160,11 @@ Never exceed 28 for heavy. The existing presets range from 6-28.
 
 The `direction` parameter in presets controls particle travel:
 
-| Direction  | Behavior                          | Implementation            |
-| ---------- | --------------------------------- | ------------------------- |
-| `outward`  | Particles explode from center     | Uses `translateX/Y`       |
-| `inward`   | Particles implode to center       | Uses `translateX/Y`       |
-| `downward` | Particles fall from above         | Uses `translateX/Y`       |
+| Direction  | Behavior                          | Implementation              |
+| ---------- | --------------------------------- | --------------------------- |
+| `outward`  | Particles explode from center     | Uses `translateX/Y`         |
+| `inward`   | Particles implode to center       | Uses `translateX/Y`         |
+| `downward` | Particles fall from above         | Uses `translateX/Y`         |
 | `toward`   | Particles travel to a destination | Uses `left/top` (required!) |
 
 **Critical**: `toward` direction MUST use `left/top` animation, not `translateX/Y`. This is because anime.js v4's `composition: 'none'` doesn't handle pre-positioned transforms correctly. See `animeUtils.ts` for the pattern.

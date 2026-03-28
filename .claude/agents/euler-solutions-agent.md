@@ -31,7 +31,6 @@ Your output format should be a structured solutions report:
 **Proposed Solutions**:
 
 1. [Solution A] - [Brief description]
-
    - Reasoning: [Why this works]
    - Trade-offs: [Costs/risks]
    - Implementation: [Key steps]
@@ -50,6 +49,7 @@ Your output format should be a structured solutions report:
 When solutions reveal tasks that should be handled separately, output them in this format:
 
 ---
+
 ## Deferred Task: [Brief Title]
 
 **Suggested Issue Title:** [Concise, actionable title]
@@ -65,12 +65,15 @@ Related to #PARENT_ISSUE
 **Suggested Labels:** `enhancement`, `chore`, or other relevant labels
 
 **gh command:**
+
 ```bash
 gh issue create --title "[Title]" --body "[Body]" --label "labels"
 ```
+
 ---
 
 Deferral criteria:
+
 - Out of scope for the current issue
 - Separate concern that deserves its own tracking
 - Tech debt or refactoring discovered during analysis

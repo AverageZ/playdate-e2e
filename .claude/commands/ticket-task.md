@@ -29,7 +29,7 @@ Fetch available labels via: `gh label list`
 
 For each deferred task, output a ready-to-use block:
 
-```
+````
 ## Deferred Task: [Brief Title]
 
 **Suggested Issue Title:** [Title for new issue]
@@ -47,5 +47,8 @@ Related to #PARENT_ISSUE_NUMBER
 **gh command:**
 ```bash
 gh issue create --title "[Title]" --body "[Body]" --label "label1,label2"
+````
+
 ```
+
 ```

@@ -114,7 +114,7 @@ Lives in this repository. Follows existing conventions: `pdk_` prefix, file-scop
 ```c
 void pdk_e2e_init(PlaydateAPI *pd, int port);    // connect to runner's TCP server
 void pdk_e2e_update(void);                            // poll and process TCP commands
-void pdk_e2e_get_buttons(PDButtons *current, PDButtons *pushed, PDButtons *released);  // drop-in for getButtonState(), ORs in injected buttons
+void pdk_e2e_get_buttons(PDButtons *current, PDButtons *pushed, PDButtons *released);  // drop-in for getButtonState(), combines real + injected state (see below)
 float pdk_e2e_crank(void);                        // return injected crank, or real crank if none injected
 void pdk_e2e_expose_int(const char *name, const int *ptr);
 void pdk_e2e_expose_float(const char *name, const float *ptr);
@@ -129,7 +129,26 @@ REQUESTING_ACCESS → WAITING_ACCESS → CONNECTING → WAITING_CONNECT → CONN
                                                               (sends READY 0xFE)
 ```
 
-Uses `pd->network->tcp->requestAccess()` → `newConnection()` → `open()`. On `CONNECTED`, sends READY. Each frame, `pdk_e2e_update()` checks `getBytesAvailable()` and processes one command. `pdk_e2e_get_buttons()` wraps `pd->system->getButtonState()` and ORs in any injected buttons. `pdk_e2e_crank()` returns the injected crank angle if set, otherwise the real crank angle.
+Uses `pd->network->tcp->requestAccess()` → `newConnection()` → `open()`. On `CONNECTED`, sends READY. Each frame, `pdk_e2e_update()` checks `getBytesAvailable()` and processes one command. `pdk_e2e_crank()` returns the injected crank angle if set, otherwise the real crank angle.
+
+#### `pdk_e2e_get_buttons()` — pushed/released semantics
+
+`pdk_e2e_get_buttons()` wraps `pd->system->getButtonState()` and combines real and injected button state. The module tracks the previous frame's injected bitmask internally to compute transition deltas:
+
+- `*current` = real current buttons OR injected buttons
+- `*pushed` = (real pushed) OR (injected buttons that were **not** injected on the previous frame)
+- `*released` = (real released) OR (buttons that were injected on the previous frame but are **not** injected now)
+
+Transitions are snapshotted once per frame during `pdk_e2e_update()` — calling `pdk_e2e_get_buttons()` multiple times in the same frame returns consistent results.
+
+Example — `pressA()`, hold 3 frames, `releaseInput()`:
+
+| Frame | Injected now | Injected prev frame | `*current` | `*pushed` | `*released` |
+| ----- | ------------ | ------------------- | ---------- | --------- | ----------- |
+| 1     | A            | (none)              | A          | **A**     | —           |
+| 2     | A            | A                   | A          | —         | —           |
+| 3     | A            | A                   | A          | —         | —           |
+| 4     | (none)       | A                   | —          | —         | **A**       |
 
 ### Game integration
 
@@ -261,6 +280,12 @@ Multiple buttons: OR the values together. Example: A + Up = `0x01 | 0x04` = `0x0
 - Sentinel value: `-1.0` means "no crank injection" — `pdk_e2e_crank()` passes through the real hardware crank angle
 - **Delta warning:** Games that use `getCrankChange()` (delta) instead of `getCrankAngle()` (absolute) will see a large instantaneous delta on the first frame of injection (e.g., real angle 0° → injected 180° = +180° change). Use small incremental angle steps to avoid this, or use the TS-side `rotateCrank(delta)` helper.
 
+**Button transitions:** The injected bitmask persists until the next INJECT_INPUT or RELEASE_INPUT command. The C module tracks the previous frame's injected bitmask to compute pushed/released deltas (see [`pdk_e2e_get_buttons()` semantics](#pdk_e2e_get_buttons--pushedreleased-semantics)):
+
+- A button appearing in the new bitmask but not the previous one is reported as `pushed` on that frame.
+- A button in the previous bitmask but not the new one is reported as `released` on that frame.
+- Sending the same bitmask again produces no transitions — `pushed` and `released` are both empty.
+
 Response: INPUT_ACK (0x83).
 
 #### RELEASE_INPUT semantics (0x05)
@@ -272,7 +297,19 @@ Clears **all** injected input state:
 
 After RELEASE_INPUT, the game behaves as if no input injection has occurred. Use between tests within a suite to reset state.
 
+On the frame following RELEASE_INPUT, any buttons that were in the injected bitmask will appear in the `*released` output of `pdk_e2e_get_buttons()`. This ensures games using `released` for button-up actions (e.g., "fire on release") see the correct transition.
+
 Response: INPUT_ACK (0x83).
+
+#### Required test cases for injected button transitions
+
+These must be implemented as C-side unit tests (protocol/state machine level) during Phase 3:
+
+1. **Single-frame press:** INJECT_INPUT(A) → verify `pushed` has A on that frame → next frame (no new command) → verify `pushed` is empty, `current` still has A
+2. **Release:** INJECT_INPUT(A) → wait 1+ frames → RELEASE_INPUT → verify `released` has A on the next frame, `current` is empty
+3. **Button swap:** INJECT_INPUT(A) → next frame INJECT_INPUT(B) → verify `pushed` has B, `released` has A, `current` has B only
+4. **Multi-button partial release:** INJECT_INPUT(A|B) → verify both in `pushed` → next frame INJECT_INPUT(A) → verify B in `released`, A in `current`, A **not** in `pushed`
+5. **No-op re-injection:** INJECT_INPUT(A) → wait 1 frame → INJECT_INPUT(A) again → verify `pushed` and `released` are both empty
 
 ### Responses (Game → Runner)
 

@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import prettierConfig from 'eslint-config-prettier';
+import checkFilePlugin from 'eslint-plugin-check-file';
 import perfectionistPlugin from 'eslint-plugin-perfectionist';
 import prettierPlugin from 'eslint-plugin-prettier';
 import { readFileSync } from 'fs';
@@ -31,11 +32,13 @@ export default [
       },
     },
     plugins: {
+      'check-file': checkFilePlugin,
       perfectionist: perfectionistPlugin,
       prettier: prettierPlugin,
     },
     rules: {
       // TypeScript
+      '@typescript-eslint/consistent-type-definitions': ['error', 'type'],
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-shadow': 'error',
@@ -80,6 +83,17 @@ export default [
           partitionByComment: true,
           type: 'alphabetical',
         },
+      ],
+
+      // File naming
+      'check-file/filename-naming-convention': [
+        'error',
+        { '**/*.{js,ts}': '+([a-zA-Z0-9])' },
+        { ignoreMiddleExtensions: true },
+      ],
+      'check-file/folder-naming-convention': [
+        'error',
+        { 'src/**': 'KEBAB_CASE' },
       ],
 
       // Prettier

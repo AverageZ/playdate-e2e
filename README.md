@@ -6,6 +6,42 @@ Open-source e2e testing library for the Playdate handheld. Works with both C and
 
 Playdate developers have unit tests and property-based tests for pure logic, but no way to test "when I press A on the title screen, the game starts." The community has been requesting simulator automation, hopefully this fills that gap.
 
+## Requirements
+
+<!-- AIDEV-NOTE: SDK version 2.6.0 is a best guess for TCP API introduction — verify against Playdate SDK changelog -->
+
+- **Playdate SDK ≥ 2.6.0** — required for `pd->network->tcp` APIs (`requestAccess`, `newConnection`, `open`, `getBytesAvailable`, `read`, `write`, `close`). The `pd->graphics->getDisplayFrame()` API has been available since SDK 1.0.
+- **Node.js ≥ 24** — required for the TypeScript test runner
+- **pnpm ≥ 10.24.0** — package manager
+- **`PLAYDATE_SDK_PATH`** environment variable — must point to your Playdate SDK installation
+
+## Installation
+
+### TypeScript test runner
+
+```bash
+npm install --save-dev playdate-e2e
+# or
+pnpm add -D playdate-e2e
+```
+
+### C module (C games)
+
+Copy `pdk_e2e.h` and `pdk_e2e.c` from this repository into your game's source directory. No build system changes needed — the files compile with the Playdate SDK directly. See [Game integration](#game-integration) for usage.
+
+### Lua C extension (Lua games)
+
+Copy `pdk_e2e.c` and `pdk_e2e_ext.c` from this repository into your source directory and add them to your CMakeLists.txt:
+
+```cmake
+add_executable(${PLAYDATE_GAME_NAME}
+    src/pdk_e2e.c
+    src/pdk_e2e_ext.c
+)
+```
+
+See [Build integration](#build-integration) for details.
+
 ## Architecture
 
 ```
@@ -57,7 +93,7 @@ expect(score).toBe(3);
 
 ## C Module: `pdk_e2e.h / pdk_e2e.c`
 
-Lives in pd-kit. Follows existing conventions: `pdk_` prefix, file-scoped static `PlaydateAPI *pd`, init once during `kEventInit`, no heap after init.
+Lives in this repository. Follows existing conventions: `pdk_` prefix, file-scoped static `PlaydateAPI *pd`, init once during `kEventInit`, no heap after init.
 
 ### Device builds — compiles to nothing
 
@@ -448,6 +484,56 @@ export default function setup({ config, provide }) {
 ```
 
 **First-run behavior:** When no reference PNG exists, the captured frame is saved as the new reference. The test passes and logs: `Screenshot "title-screen" created (no reference existed)`. This matches vitest's convention for new snapshots.
+
+---
+
+## Limitations
+
+Things this library **cannot** do (yet?):
+
+| Capability                   | Status                  | Notes                                                                                                                                                                                |
+| ---------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Accelerometer**            | Not supported           | Playdate's accelerometer cannot be injected or read via the testing protocol. Games that depend on tilt input cannot be fully e2e tested.                                            |
+| **Sound/audio**              | Not supported           | No way to capture or assert on audio output. Test game logic and visual state instead.                                                                                               |
+| **System menu**              | Not supported           | Cannot open, interact with, or verify the Playdate system menu.                                                                                                                      |
+| **State types**              | int, float, string only | No bools, arrays, or composite types. Workaround: expose a bool as int (0/1), or serialize composites to a string.                                                                   |
+| **State pointers (C usage)** | Global/static only      | `pdk_e2e_expose_int("x", &ptr)` stores a pointer — if `ptr` is a local variable, it will be garbage by query time. Only expose pointers to global, static, or heap-allocated values. |
+| **Linux CI**                 | Blocked                 | Simulator [hangs under xvfb](https://devforum.play.date/t/simulator-hangs-in-xvfb/10796). macOS CI works. Windows CI is untested but likely works.                                   |
+
+---
+
+## Error Handling
+
+### Timeouts
+
+Every async operation in `PlaydateGame` accepts an optional `timeout` (milliseconds). When a timeout expires, the library throws with a message naming the operation and duration:
+
+```
+TimeoutError: waitFrames(30) timed out after 5000ms — is the simulator running? Is the game calling pdk_e2e_update()?
+```
+
+Default timeout: 5000ms for most operations. `PlaydateGame.launch()` uses 10000ms to allow for simulator startup.
+
+### Connection failures
+
+| Scenario                           | Behavior                                                                                                               |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Simulator not running              | `launch()` times out. Error suggests checking `PLAYDATE_SDK_PATH` and that the `.pdx` was built with `pdk_e2e` linked. |
+| Port already in use                | `launch()` fails immediately with `EADDRINUSE`. Kill the orphaned simulator or use a different port.                   |
+| Game doesn't call `pdk_e2e_init()` | TCP server never receives READY. `launch()` times out.                                                                 |
+| Game crashes mid-test              | TCP connection drops. Next command throws a connection error. Call `game.close()` in `afterEach` to clean up.          |
+| TCP connection drops               | Commands throw immediately. The library does not auto-reconnect — kill and relaunch via a new `PlaydateGame.launch()`. |
+| Simulator hangs                    | Commands time out. `game.close()` kills the simulator process.                                                         |
+
+### Cleanup
+
+Always use `afterEach` to close the game, even on test failure:
+
+```typescript
+afterEach(async () => await game?.close());
+```
+
+`close()` kills the simulator process and releases the TCP port.
 
 ---
 

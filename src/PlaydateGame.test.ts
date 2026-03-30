@@ -5,7 +5,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { encodeMessage, ProtocolParser } from './connection/protocol';
 import { PlaydateGame } from './PlaydateGame';
-import { MSG_ERROR, MSG_PING, MSG_PONG, MSG_READY } from './types';
+import {
+  FRAME_DATA_SIZE,
+  MSG_CAPTURE_FRAME,
+  MSG_ERROR,
+  MSG_FRAME_DATA,
+  MSG_PING,
+  MSG_PONG,
+  MSG_READY,
+} from './types';
 
 // Helper: connect a mock game client that sends READY on connection
 async function connectMockGame(port: number): Promise<Socket> {
@@ -116,5 +124,58 @@ describe('PlaydateGame', () => {
 
     // Mock game does NOT respond to PINGs
     await expect(game.waitFrames(1)).rejects.toThrow(/timed out/);
+  });
+
+  it('screenshot sends CAPTURE_FRAME and returns framebuffer', async () => {
+    const { TcpServer } = await import('./connection/tcpServer');
+    const server = new TcpServer({ port: 0, timeout: 2000 });
+    await server.listen();
+
+    mockClient = await connectMockGame(server.listeningPort);
+    await server.waitForConnection(1000);
+    await server.waitForReady(1000);
+
+    game = PlaydateGame.fromServer(server, 2000);
+
+    // Fill framebuffer with a known pattern
+    const testFramebuffer = Buffer.alloc(FRAME_DATA_SIZE);
+    testFramebuffer[0] = 0xde;
+    testFramebuffer[FRAME_DATA_SIZE - 1] = 0xad;
+
+    // Mock game responds to CAPTURE_FRAME with FRAME_DATA
+    const parser = new ProtocolParser();
+    mockClient.on('data', (chunk: Buffer) => {
+      parser.push(chunk);
+      for (const msg of parser.parse()) {
+        if (msg.type === MSG_CAPTURE_FRAME) {
+          mockClient!.write(
+            encodeMessage({
+              framebuffer: testFramebuffer,
+              type: MSG_FRAME_DATA,
+            }),
+          );
+        }
+      }
+    });
+
+    const result = await game.screenshot();
+    expect(result.length).toBe(FRAME_DATA_SIZE);
+    expect(result[0]).toBe(0xde);
+    expect(result[FRAME_DATA_SIZE - 1]).toBe(0xad);
+  });
+
+  it('screenshot times out if game does not respond', async () => {
+    const { TcpServer } = await import('./connection/tcpServer');
+    const server = new TcpServer({ port: 0, timeout: 200 });
+    await server.listen();
+
+    mockClient = await connectMockGame(server.listeningPort);
+    await server.waitForConnection(1000);
+    await server.waitForReady(1000);
+
+    game = PlaydateGame.fromServer(server, 200);
+
+    // Mock game does NOT respond to CAPTURE_FRAME
+    await expect(game.screenshot()).rejects.toThrow(/timed out/);
   });
 });

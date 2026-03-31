@@ -1,3 +1,4 @@
+import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import type { Message } from '../types';
@@ -449,5 +450,232 @@ describe('ProtocolParser — streaming', () => {
     expect(parser.parse()).toHaveLength(1);
     expect(parser.parse()).toHaveLength(0);
     expect(parser.parse()).toHaveLength(0);
+  });
+});
+
+// --- Custom arbitraries ---
+
+/** Generate a valid 6-bit button bitmask (any combination of A, B, Up, Down, Left, Right). */
+const fcButtons = () => fc.integer({ max: 0x3f, min: 0x00 });
+
+/** Generate a float32-representable crank angle (write→read round-trip through float32). */
+const fcCrankAngle = () =>
+  fc.float({ noDefaultInfinity: true, noNaN: true }).map((f) => {
+    const buf = Buffer.alloc(4);
+    buf.writeFloatLE(f);
+
+    return buf.readFloatLE(0);
+  });
+
+/** Generate a float32-representable value (same canonicalization as crank). */
+const fcFloat32 = () =>
+  fc.float({ noDefaultInfinity: true, noNaN: true }).map((f) => {
+    const buf = Buffer.alloc(4);
+    buf.writeFloatLE(f);
+
+    return buf.readFloatLE(0);
+  });
+
+/**
+ * Generate a string that fits in a protocol payload.
+ * Max payload is uint16 (65535). For QUERY_STATE the payload is string + null byte,
+ * so the string's UTF-8 encoding must be <= 65534 bytes. We limit to 1000 to keep
+ * tests fast while still exercising multi-byte UTF-8.
+ */
+const fcProtocolString = () => fc.string({ maxLength: 1000, unit: 'grapheme' });
+
+/** Generate any valid Message. */
+const fcMessage = (): fc.Arbitrary<Message> =>
+  fc.oneof(
+    // Empty-payload messages
+    fc.constant<Message>({ type: MSG_PING }),
+    fc.constant<Message>({ type: MSG_PONG }),
+    fc.constant<Message>({ type: MSG_CAPTURE_FRAME }),
+    fc.constant<Message>({ type: MSG_RELEASE_INPUT }),
+    fc.constant<Message>({ type: MSG_INPUT_ACK }),
+    fc.constant<Message>({ type: MSG_READY }),
+    fc.constant<Message>({ type: MSG_STATE_NOT_FOUND }),
+
+    // Payload messages
+    fc.record({
+      buttons: fcButtons(),
+      crankAngle: fcCrankAngle(),
+      type: fc.constant(MSG_INJECT_INPUT as typeof MSG_INJECT_INPUT),
+    }),
+    fc.record({
+      name: fcProtocolString(),
+      type: fc.constant(MSG_QUERY_STATE as typeof MSG_QUERY_STATE),
+    }),
+    fc.record({
+      message: fcProtocolString(),
+      type: fc.constant(MSG_ERROR as typeof MSG_ERROR),
+    }),
+    // STATE_VALUE variants
+    fc.record({
+      stateType: fc.constant(StateType.Int32 as const),
+      type: fc.constant(MSG_STATE_VALUE as typeof MSG_STATE_VALUE),
+      value: fc.integer({ max: 2_147_483_647, min: -2_147_483_648 }),
+    }),
+    fc.record({
+      stateType: fc.constant(StateType.Float32 as const),
+      type: fc.constant(MSG_STATE_VALUE as typeof MSG_STATE_VALUE),
+      value: fcFloat32(),
+    }),
+    fc.record({
+      stateType: fc.constant(StateType.String as const),
+      type: fc.constant(MSG_STATE_VALUE as typeof MSG_STATE_VALUE),
+      value: fcProtocolString(),
+    }),
+    // FRAME_DATA excluded — 12KB per sample makes property tests slow
+  );
+
+// --- Property-based tests ---
+
+describe('property-based tests', () => {
+  it('round-trip: decode(encode(msg)) === msg for all message types', () => {
+    const parser = new ProtocolParser();
+
+    fc.assert(
+      fc.property(fcMessage(), (msg) => {
+        parser.reset();
+        parser.push(encodeMessage(msg));
+        const decoded = parser.parse();
+        expect(decoded).toHaveLength(1);
+        expect(decoded[0]).toEqual(msg);
+      }),
+    );
+  });
+
+  it('length prefix matches actual payload size', () => {
+    fc.assert(
+      fc.property(fcMessage(), (msg) => {
+        const encoded = encodeMessage(msg);
+        const declaredLength = encoded.readUInt16BE(1);
+        const actualPayload = encoded.length - HEADER_SIZE;
+        expect(declaredLength).toBe(actualPayload);
+      }),
+    );
+  });
+
+  it('chunked streaming: random-sized chunks yield same messages', () => {
+    fc.assert(
+      fc.property(
+        fcMessage(),
+        fc.array(fc.integer({ max: 50, min: 1 }), {
+          maxLength: 20,
+          minLength: 1,
+        }),
+        (msg, chunkSizes) => {
+          const encoded = encodeMessage(msg);
+          const parser = new ProtocolParser();
+
+          // Split encoded buffer into random-sized chunks
+          let offset = 0;
+          for (const size of chunkSizes) {
+            if (offset >= encoded.length) break;
+            const end = Math.min(offset + size, encoded.length);
+            parser.push(encoded.subarray(offset, end));
+            offset = end;
+          }
+          // Push any remainder
+          if (offset < encoded.length) {
+            parser.push(encoded.subarray(offset));
+          }
+
+          const decoded = parser.parse();
+          expect(decoded).toHaveLength(1);
+          expect(decoded[0]).toEqual(msg);
+        },
+      ),
+    );
+  });
+
+  it('concatenation: N encoded messages in one buffer yield N decoded messages', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fcMessage(), { maxLength: 10, minLength: 1 }),
+        (messages) => {
+          const encoded = Buffer.concat(messages.map(encodeMessage));
+          const parser = new ProtocolParser();
+          parser.push(encoded);
+          const decoded = parser.parse();
+          expect(decoded).toHaveLength(messages.length);
+          for (let i = 0; i < messages.length; i++) {
+            expect(decoded[i]).toEqual(messages[i]);
+          }
+        },
+      ),
+    );
+  });
+
+  it('string payloads are null-terminated in encoded output', () => {
+    const fcStringMessage = fc.oneof(
+      fc.record({
+        name: fcProtocolString(),
+        type: fc.constant(MSG_QUERY_STATE as typeof MSG_QUERY_STATE),
+      }),
+      fc.record({
+        message: fcProtocolString(),
+        type: fc.constant(MSG_ERROR as typeof MSG_ERROR),
+      }),
+      fc.record({
+        stateType: fc.constant(StateType.String as const),
+        type: fc.constant(MSG_STATE_VALUE as typeof MSG_STATE_VALUE),
+        value: fcProtocolString(),
+      }),
+    );
+
+    fc.assert(
+      fc.property(fcStringMessage, (msg) => {
+        const encoded = encodeMessage(msg);
+        const payload = encoded.subarray(HEADER_SIZE);
+        // Last byte of payload must be null terminator
+        expect(payload[payload.length - 1]).toBe(0x00);
+      }),
+    );
+  });
+
+  it('INJECT_INPUT: all button combinations round-trip', () => {
+    const parser = new ProtocolParser();
+
+    fc.assert(
+      fc.property(fcButtons(), fcCrankAngle(), (buttons, crankAngle) => {
+        parser.reset();
+        const msg: Message = {
+          buttons,
+          crankAngle,
+          type: MSG_INJECT_INPUT,
+        };
+        parser.push(encodeMessage(msg));
+        const [decoded] = parser.parse();
+        expect(decoded).toEqual(msg);
+      }),
+    );
+  });
+
+  it('STATE_VALUE int32 boundary values round-trip', () => {
+    const parser = new ProtocolParser();
+    const fcBoundaryInt = fc.oneof(
+      fc.constant(0),
+      fc.constant(-1),
+      fc.constant(1),
+      fc.constant(-2_147_483_648),
+      fc.constant(2_147_483_647),
+      fc.integer({ max: 2_147_483_647, min: -2_147_483_648 }),
+    );
+
+    fc.assert(
+      fc.property(fcBoundaryInt, (value) => {
+        parser.reset();
+        const msg: Message = {
+          stateType: StateType.Int32,
+          type: MSG_STATE_VALUE,
+          value,
+        };
+        parser.push(encodeMessage(msg));
+        const [decoded] = parser.parse();
+        expect(decoded).toEqual(msg);
+      }),
+    );
   });
 });

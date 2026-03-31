@@ -4,7 +4,16 @@ import type { Message } from './types';
 
 import { compareScreenshot } from './assert/Screenshot';
 import { TcpServer } from './connection/tcpServer';
-import { MSG_CAPTURE_FRAME, MSG_FRAME_DATA, MSG_PING, MSG_PONG } from './types';
+import {
+  MSG_CAPTURE_FRAME,
+  MSG_FRAME_DATA,
+  MSG_PING,
+  MSG_PONG,
+  MSG_QUERY_STATE,
+  MSG_STATE_NOT_FOUND,
+  MSG_STATE_VALUE,
+  StateType,
+} from './types';
 
 export type LaunchOptions = {
   /** Port for the TCP server. Default: 54321 */
@@ -24,6 +33,7 @@ export type LaunchOptions = {
 export class PlaydateGame {
   private server: TcpServer;
   private timeout: number;
+  private queryInFlight = false;
 
   private constructor(server: TcpServer, timeout: number) {
     this.server = server;
@@ -138,6 +148,95 @@ export class PlaydateGame {
       case 'pass':
         return result;
     }
+  }
+
+  /**
+   * Query an int32 state value exposed by the game via pdk_e2e_expose_int().
+   * Throws if the state name is not registered or the type does not match.
+   */
+  async queryInt(name: string): Promise<number> {
+    const { stateType, value } = await this.queryState(name);
+    if (stateType !== StateType.Int32) {
+      throw new Error(
+        `State "${name}" is ${StateType[stateType]}, not Int32. ` +
+          'Use the matching query method for this type.',
+      );
+    }
+
+    return value as number;
+  }
+
+  /**
+   * Query a float32 state value exposed by the game via pdk_e2e_expose_float().
+   * Throws if the state name is not registered or the type does not match.
+   */
+  async queryFloat(name: string): Promise<number> {
+    const { stateType, value } = await this.queryState(name);
+    if (stateType !== StateType.Float32) {
+      throw new Error(
+        `State "${name}" is ${StateType[stateType]}, not Float32. ` +
+          'Use the matching query method for this type.',
+      );
+    }
+
+    return value as number;
+  }
+
+  /**
+   * Query a string state value exposed by the game via pdk_e2e_expose_string().
+   * Throws if the state name is not registered or the type does not match.
+   */
+  async queryString(name: string): Promise<string> {
+    const { stateType, value } = await this.queryState(name);
+    if (stateType !== StateType.String) {
+      throw new Error(
+        `State "${name}" is ${StateType[stateType]}, not String. ` +
+          'Use the matching query method for this type.',
+      );
+    }
+
+    return value as string;
+  }
+
+  /** Send QUERY_STATE and wait for STATE_VALUE or STATE_NOT_FOUND. */
+  private async queryState(
+    name: string,
+  ): Promise<{ stateType: StateType; value: number | string }> {
+    if (this.queryInFlight) {
+      throw new Error(
+        'A queryState call is already in-flight. Queries must be sequential.',
+      );
+    }
+    this.queryInFlight = true;
+
+    let response: Message;
+    try {
+      this.server.send({ name, type: MSG_QUERY_STATE });
+
+      response = await this.server.receiveAny(
+        [MSG_STATE_VALUE, MSG_STATE_NOT_FOUND],
+        this.timeout,
+      );
+    } catch (err) {
+      throw new Error(
+        `queryState("${name}") failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      this.queryInFlight = false;
+    }
+
+    if (response.type === MSG_STATE_NOT_FOUND) {
+      throw new Error(
+        `State "${name}" is not registered on the game side. ` +
+          'Ensure the game calls pdk_e2e_expose_int/float/string() for this name.',
+      );
+    }
+
+    // receiveAny constrains return to MSG_STATE_VALUE | MSG_STATE_NOT_FOUND,
+    // so after the NOT_FOUND check above, this must be STATE_VALUE.
+    const stateMsg = response as Message & { type: typeof MSG_STATE_VALUE };
+
+    return { stateType: stateMsg.stateType, value: stateMsg.value };
   }
 
   /** Send a protocol message and wait for a response of the expected type. */

@@ -104,29 +104,41 @@ export class TcpServer {
 
   /** Wait for a message of the given type. */
   async receive(expectedType: number, timeout?: number): Promise<Message> {
+    return this.receiveAny([expectedType], timeout);
+  }
+
+  /** Wait for a message matching any of the given types. */
+  async receiveAny(
+    expectedTypes: number[],
+    timeout?: number,
+  ): Promise<Message> {
     const ms = timeout ?? this.timeout;
 
     // Check pending messages first
-    const idx = this.pendingMessages.findIndex((m) => m.type === expectedType);
+    const idx = this.pendingMessages.findIndex((m) =>
+      expectedTypes.includes(m.type),
+    );
     if (idx !== -1) {
       return this.pendingMessages.splice(idx, 1)[0];
     }
 
     return new Promise((resolve, reject) => {
+      const typeList = expectedTypes
+        .map((t) => `0x${t.toString(16)}`)
+        .join(', ');
       const timer = setTimeout(() => {
-        // Remove this waiter
         const wi = this.waiters.indexOf(waiter);
         if (wi !== -1) this.waiters.splice(wi, 1);
         reject(
           new Error(
-            `receive(0x${expectedType.toString(16)}) timed out after ${ms}ms. ` +
+            `receive(${typeList}) timed out after ${ms}ms. ` +
               'The game may have stopped responding or crashed.',
           ),
         );
       }, ms);
 
       const waiter = (msg: Message) => {
-        if (msg.type === expectedType) {
+        if (expectedTypes.includes(msg.type)) {
           clearTimeout(timer);
           const wi = this.waiters.indexOf(waiter);
           if (wi !== -1) this.waiters.splice(wi, 1);

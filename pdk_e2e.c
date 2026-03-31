@@ -308,11 +308,9 @@ static void drive_connection(void) {
         break;
 
     case PDK_E2E_STATE_WAITING_CONNECT:
-        // Waiting for open callback — nothing to do
-        break;
-
     case PDK_E2E_STATE_IDLE:
     case PDK_E2E_STATE_CONNECTED:
+        // Nothing to do — waiting for callback or already connected
         break;
     }
 }
@@ -326,7 +324,9 @@ static void drive_connection(void) {
  * return consistent results.
  */
 static void snapshot_buttons(void) {
-    PDButtons real_current = 0, real_pushed = 0, real_released = 0;
+    PDButtons real_current = 0;
+    PDButtons real_pushed = 0;
+    PDButtons real_released = 0;
     pd->system->getButtonState(&real_current, &real_pushed, &real_released);
 
     // Compute injected transitions from previous frame

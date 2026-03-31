@@ -78,7 +78,7 @@ typedef enum {
  * Initialize the e2e module. Call once during kEventInit.
  * Begins TCP connection to the runner's server on localhost:port.
  */
-void pdk_e2e_init(PlaydateAPI *pd, int port);
+void pdk_e2e_init(PlaydateAPI *playdate, int port);
 
 /**
  * Poll for and process TCP commands. Call once per frame in update().

@@ -25,7 +25,7 @@ TEST_BIN     := tests/test_protocol
 TEST_INCLUDES := -Itests/stubs -I$(ROOT)
 TEST_DEFINES  := -DTARGET_SIMULATOR=1 -DPDK_E2E_TESTING
 
-.PHONY: test format lint clean
+.PHONY: test format format-check lint clean
 
 test: $(TEST_BIN)
 	./$(TEST_BIN)
@@ -35,6 +35,9 @@ $(TEST_BIN): $(TEST_SRC) $(SRC) $(HDR) tests/stubs/pd_api.h
 
 format:
 	$(CLANG_FORMAT) -i $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(TEST_SRC)
+
+format-check:
+	$(CLANG_FORMAT) --dry-run --Werror $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(TEST_SRC)
 
 lint:
 	$(CLANG_TIDY) $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c -- $(TEST_DEFINES) $(TEST_INCLUDES)

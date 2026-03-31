@@ -16,7 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky",
-    "pre-commit": "pnpm format:check && pnpm lint && pnpm type-check && pnpm test"
+    "pre-commit": "pnpm format:check && pnpm lint && pnpm type-check && pnpm test && make -C c format-check && make -C c lint && make -C c test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

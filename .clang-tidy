@@ -1,0 +1,28 @@
+# playdate-e2e — clang-tidy config
+# Run: cd c && make lint
+
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  misc-*,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-uppercase-literal-suffix,
+  -readability-braces-around-statements,
+  -readability-inconsistent-ifelse-braces,
+  -readability-math-missing-parentheses,
+  -clang-analyzer-security.*,
+  -bugprone-easily-swappable-parameters,
+  -misc-no-recursion,
+  -misc-include-cleaner,
+  -misc-predictable-rand,
+  -readability-else-after-return,
+  -readability-identifier-naming,
+  -misc-use-internal-linkage
+
+WarningsAsErrors: ''
+
+HeaderFilterRegex: 'pdk_e2e\.h$'

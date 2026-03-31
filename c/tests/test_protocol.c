@@ -16,8 +16,10 @@
 #include "../../pdk_e2e.h"
 
 // Test-only API declared in pdk_e2e.c (compiled with PDK_E2E_TESTING)
-extern int pdk_e2e_test_encode_message(uint8_t *out, uint8_t type, const uint8_t *payload, uint16_t payload_len);
-extern bool pdk_e2e_test_try_parse(const uint8_t *buf, uint16_t buf_len, uint8_t *out_type, uint16_t *out_payload_len, int *out_total_len);
+extern int pdk_e2e_test_encode_message(uint8_t *out, uint8_t type, const uint8_t *payload,
+                                       uint16_t payload_len);
+extern bool pdk_e2e_test_try_parse(const uint8_t *buf, uint16_t buf_len, uint8_t *out_type,
+                                   uint16_t *out_payload_len, int *out_total_len);
 extern int pdk_e2e_test_encode_state_int32(uint8_t *out, int32_t value);
 extern int pdk_e2e_test_encode_state_float32(uint8_t *out, float value);
 extern int pdk_e2e_test_encode_state_string(uint8_t *out, const char *value);
@@ -33,16 +35,16 @@ extern void pdk_e2e_test_reset_button_state(void);
 static int tests_passed = 0;
 static int tests_run = 0;
 
-#define TEST(name) \
-    do { \
-        tests_run++; \
-        printf("  %s... ", #name); \
+#define TEST(name)                                                                                 \
+    do {                                                                                           \
+        tests_run++;                                                                               \
+        printf("  %s... ", #name);                                                                 \
     } while (0)
 
-#define PASS() \
-    do { \
-        tests_passed++; \
-        printf("ok\n"); \
+#define PASS()                                                                                     \
+    do {                                                                                           \
+        tests_passed++;                                                                            \
+        printf("ok\n");                                                                            \
     } while (0)
 
 static void assert_bytes_eq(const uint8_t *actual, const uint8_t *expected, int len) {
@@ -50,9 +52,11 @@ static void assert_bytes_eq(const uint8_t *actual, const uint8_t *expected, int 
         if (actual[i] != expected[i]) {
             printf("FAIL at byte %d: expected 0x%02x, got 0x%02x\n", i, expected[i], actual[i]);
             printf("  expected: ");
-            for (int j = 0; j < len; j++) printf("0x%02x ", expected[j]);
+            for (int j = 0; j < len; j++)
+                printf("0x%02x ", expected[j]);
             printf("\n  actual:   ");
-            for (int j = 0; j < len; j++) printf("0x%02x ", actual[j]);
+            for (int j = 0; j < len; j++)
+                printf("0x%02x ", actual[j]);
             printf("\n");
             assert(0);
         }
@@ -233,7 +237,8 @@ static void test_encode_frame_data_header(void) {
     uint8_t framebuffer[PDK_E2E_FRAME_DATA_SIZE];
     memset(framebuffer, 0xAA, PDK_E2E_FRAME_DATA_SIZE);
 
-    int len = pdk_e2e_test_encode_message(out, PDK_E2E_MSG_FRAME_DATA, framebuffer, PDK_E2E_FRAME_DATA_SIZE);
+    int len = pdk_e2e_test_encode_message(out, PDK_E2E_MSG_FRAME_DATA, framebuffer,
+                                          PDK_E2E_FRAME_DATA_SIZE);
     assert(len == PDK_E2E_HEADER_SIZE + PDK_E2E_FRAME_DATA_SIZE);
     assert(out[0] == 0x82);
     // 12480 = 0x30C0 in big-endian
@@ -294,10 +299,10 @@ static void test_parse_inject_input(void) {
     // INJECT_INPUT(A|Up=0x05, crank=90.0)
     float angle = 90.0f;
     uint8_t buf[8];
-    buf[0] = 0x03; // type
-    buf[1] = 0x00; // length high
-    buf[2] = 0x05; // length low (5 bytes)
-    buf[3] = 0x05; // buttons = A | Up
+    buf[0] = 0x03;              // type
+    buf[1] = 0x00;              // length high
+    buf[2] = 0x05;              // length low (5 bytes)
+    buf[3] = 0x05;              // buttons = A | Up
     memcpy(buf + 4, &angle, 4); // float32 LE
 
     uint8_t type;
@@ -419,7 +424,7 @@ static void test_button_single_frame_press(void) {
     pdk_e2e_test_snapshot_buttons_no_real();
     pdk_e2e_test_get_buttons(&current, &pushed, &released);
     assert(current == PDK_E2E_BUTTON_A);
-    assert(pushed == 0);  // not newly pushed
+    assert(pushed == 0); // not newly pushed
     assert(released == 0);
 
     PASS();
@@ -488,7 +493,7 @@ static void test_button_multi_partial_release(void) {
 
     pdk_e2e_test_get_buttons(&current, &pushed, &released);
     assert(current == PDK_E2E_BUTTON_A);
-    assert(pushed == 0);  // A was already held — not newly pushed
+    assert(pushed == 0); // A was already held — not newly pushed
     assert(released == PDK_E2E_BUTTON_B);
 
     PASS();
@@ -615,8 +620,8 @@ static void test_parse_two_messages_back_to_back(void) {
     TEST(parse_two_messages_back_to_back);
     // PING followed by CAPTURE_FRAME in one buffer
     uint8_t buf[] = {
-        0x01, 0x00, 0x00,  // PING
-        0x02, 0x00, 0x00   // CAPTURE_FRAME
+        0x01, 0x00, 0x00, // PING
+        0x02, 0x00, 0x00  // CAPTURE_FRAME
     };
 
     uint8_t type;
@@ -630,7 +635,8 @@ static void test_parse_two_messages_back_to_back(void) {
     assert(total_len == 3);
 
     // Use total_len to find second message
-    ok = pdk_e2e_test_try_parse(buf + total_len, sizeof(buf) - total_len, &type, &payload_len, &total_len);
+    ok = pdk_e2e_test_try_parse(buf + total_len, sizeof(buf) - total_len, &type, &payload_len,
+                                &total_len);
     assert(ok);
     assert(type == PDK_E2E_MSG_CAPTURE_FRAME);
     assert(total_len == 3);

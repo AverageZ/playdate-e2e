@@ -9,6 +9,11 @@
 CC      ?= cc
 CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -Werror
 
+# LLVM toolchain — prefer Homebrew LLVM, fall back to system PATH
+LLVM_BIN     := $(shell [ -d /opt/homebrew/opt/llvm/bin ] && echo /opt/homebrew/opt/llvm/bin || echo "")
+CLANG_FORMAT := $(if $(LLVM_BIN),$(LLVM_BIN)/clang-format,clang-format)
+CLANG_TIDY   := $(if $(LLVM_BIN),$(LLVM_BIN)/clang-tidy,clang-tidy)
+
 # Source files at repo root
 ROOT    := ..
 SRC     := $(ROOT)/pdk_e2e.c
@@ -29,10 +34,10 @@ $(TEST_BIN): $(TEST_SRC) $(SRC) $(HDR) tests/stubs/pd_api.h
 	$(CC) $(CFLAGS) $(TEST_DEFINES) $(TEST_INCLUDES) -o $@ $(TEST_SRC) $(SRC) -lm
 
 format:
-	clang-format -i $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(TEST_SRC)
+	$(CLANG_FORMAT) -i $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(TEST_SRC)
 
 lint:
-	clang-tidy $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c -- $(TEST_DEFINES) $(TEST_INCLUDES)
+	$(CLANG_TIDY) $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c -- $(TEST_DEFINES) $(TEST_INCLUDES)
 
 clean:
 	rm -f $(TEST_BIN)

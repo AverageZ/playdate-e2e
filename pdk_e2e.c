@@ -36,11 +36,7 @@ static PDButtons snapshot_pushed = 0;
 static PDButtons snapshot_released = 0;
 
 // Exposed-state registry
-typedef enum {
-    EXPOSED_INT,
-    EXPOSED_FLOAT,
-    EXPOSED_STRING
-} exposed_type;
+typedef enum { EXPOSED_INT, EXPOSED_FLOAT, EXPOSED_STRING } exposed_type;
 
 typedef struct {
     const char *name;
@@ -66,7 +62,8 @@ static int exposed_state_count = 0;
  * Returns the total number of bytes written (header + payload).
  * The caller must ensure out has room for at least PDK_E2E_HEADER_SIZE + payload_len bytes.
  */
-static int encode_message(uint8_t *out, uint8_t type, const uint8_t *payload, uint16_t payload_len) {
+static int encode_message(uint8_t *out, uint8_t type, const uint8_t *payload,
+                          uint16_t payload_len) {
     out[0] = type;
     out[1] = (uint8_t)(payload_len >> 8);
     out[2] = (uint8_t)(payload_len & 0xFF);
@@ -217,15 +214,15 @@ static void handle_query_state(const uint8_t *payload, uint16_t payload_len) {
     for (int i = 0; i < exposed_state_count; i++) {
         if (strcmp(exposed_states[i].name, name) == 0) {
             switch (exposed_states[i].type) {
-                case EXPOSED_INT:
-                    send_state_int32(*exposed_states[i].ptr.i);
-                    return;
-                case EXPOSED_FLOAT:
-                    send_state_float32(*exposed_states[i].ptr.f);
-                    return;
-                case EXPOSED_STRING:
-                    send_state_string(*exposed_states[i].ptr.s);
-                    return;
+            case EXPOSED_INT:
+                send_state_int32(*exposed_states[i].ptr.i);
+                return;
+            case EXPOSED_FLOAT:
+                send_state_float32(*exposed_states[i].ptr.f);
+                return;
+            case EXPOSED_STRING:
+                send_state_string(*exposed_states[i].ptr.s);
+                return;
             }
         }
     }
@@ -245,24 +242,24 @@ static void handle_release_input(void) {
  */
 static void dispatch_command(const parsed_message *msg) {
     switch (msg->type) {
-        case PDK_E2E_MSG_PING:
-            handle_ping();
-            break;
-        case PDK_E2E_MSG_CAPTURE_FRAME:
-            handle_capture_frame();
-            break;
-        case PDK_E2E_MSG_INJECT_INPUT:
-            handle_inject_input(msg->payload, msg->payload_len);
-            break;
-        case PDK_E2E_MSG_QUERY_STATE:
-            handle_query_state(msg->payload, msg->payload_len);
-            break;
-        case PDK_E2E_MSG_RELEASE_INPUT:
-            handle_release_input();
-            break;
-        default:
-            pd->system->logToConsole("pdk_e2e: unknown message type 0x%02x, skipping", msg->type);
-            break;
+    case PDK_E2E_MSG_PING:
+        handle_ping();
+        break;
+    case PDK_E2E_MSG_CAPTURE_FRAME:
+        handle_capture_frame();
+        break;
+    case PDK_E2E_MSG_INJECT_INPUT:
+        handle_inject_input(msg->payload, msg->payload_len);
+        break;
+    case PDK_E2E_MSG_QUERY_STATE:
+        handle_query_state(msg->payload, msg->payload_len);
+        break;
+    case PDK_E2E_MSG_RELEASE_INPUT:
+        handle_release_input();
+        break;
+    default:
+        pd->system->logToConsole("pdk_e2e: unknown message type 0x%02x, skipping", msg->type);
+        break;
     }
 }
 
@@ -294,29 +291,29 @@ static void on_connected(int success) {
  */
 static void drive_connection(void) {
     switch (conn_state) {
-        case PDK_E2E_STATE_REQUESTING_ACCESS:
-            // Waiting for requestAccess callback — nothing to do
-            break;
+    case PDK_E2E_STATE_REQUESTING_ACCESS:
+        // Waiting for requestAccess callback — nothing to do
+        break;
 
-        case PDK_E2E_STATE_ACCESS_GRANTED:
-            // Access granted — create connection and open
-            tcp_conn = pd->network->tcp->newConnection();
-            if (tcp_conn == NULL) {
-                pd->system->logToConsole("pdk_e2e: failed to create TCP connection");
-                conn_state = PDK_E2E_STATE_IDLE;
-                return;
-            }
-            pd->network->tcp->open(tcp_conn, "127.0.0.1", target_port, on_connected);
-            conn_state = PDK_E2E_STATE_WAITING_CONNECT;
-            break;
+    case PDK_E2E_STATE_ACCESS_GRANTED:
+        // Access granted — create connection and open
+        tcp_conn = pd->network->tcp->newConnection();
+        if (tcp_conn == NULL) {
+            pd->system->logToConsole("pdk_e2e: failed to create TCP connection");
+            conn_state = PDK_E2E_STATE_IDLE;
+            return;
+        }
+        pd->network->tcp->open(tcp_conn, "127.0.0.1", target_port, on_connected);
+        conn_state = PDK_E2E_STATE_WAITING_CONNECT;
+        break;
 
-        case PDK_E2E_STATE_WAITING_CONNECT:
-            // Waiting for open callback — nothing to do
-            break;
+    case PDK_E2E_STATE_WAITING_CONNECT:
+        // Waiting for open callback — nothing to do
+        break;
 
-        case PDK_E2E_STATE_IDLE:
-        case PDK_E2E_STATE_CONNECTED:
-            break;
+    case PDK_E2E_STATE_IDLE:
+    case PDK_E2E_STATE_CONNECTED:
+        break;
     }
 }
 
@@ -377,7 +374,8 @@ void pdk_e2e_update(void) {
     // Read available TCP data into receive buffer
     int available = pd->network->tcp->getBytesAvailable(tcp_conn);
     if (available < 0) {
-        pd->system->logToConsole("pdk_e2e: connection lost (getBytesAvailable returned %d)", available);
+        pd->system->logToConsole("pdk_e2e: connection lost (getBytesAvailable returned %d)",
+                                 available);
         conn_state = PDK_E2E_STATE_IDLE;
         recv_buf_len = 0;
         return;
@@ -418,9 +416,12 @@ void pdk_e2e_update(void) {
 }
 
 void pdk_e2e_get_buttons(PDButtons *current, PDButtons *pushed, PDButtons *released) {
-    if (current != NULL) *current = snapshot_current;
-    if (pushed != NULL) *pushed = snapshot_pushed;
-    if (released != NULL) *released = snapshot_released;
+    if (current != NULL)
+        *current = snapshot_current;
+    if (pushed != NULL)
+        *pushed = snapshot_pushed;
+    if (released != NULL)
+        *released = snapshot_released;
 }
 
 float pdk_e2e_crank(void) {
@@ -433,7 +434,8 @@ float pdk_e2e_crank(void) {
 
 void pdk_e2e_expose_int(const char *name, const int *ptr) {
     if (exposed_state_count >= PDK_E2E_MAX_EXPOSED_STATES) {
-        pd->system->logToConsole("pdk_e2e: exposed state registry full (%d max)", PDK_E2E_MAX_EXPOSED_STATES);
+        pd->system->logToConsole("pdk_e2e: exposed state registry full (%d max)",
+                                 PDK_E2E_MAX_EXPOSED_STATES);
         return;
     }
     exposed_states[exposed_state_count].name = name;
@@ -444,7 +446,8 @@ void pdk_e2e_expose_int(const char *name, const int *ptr) {
 
 void pdk_e2e_expose_float(const char *name, const float *ptr) {
     if (exposed_state_count >= PDK_E2E_MAX_EXPOSED_STATES) {
-        pd->system->logToConsole("pdk_e2e: exposed state registry full (%d max)", PDK_E2E_MAX_EXPOSED_STATES);
+        pd->system->logToConsole("pdk_e2e: exposed state registry full (%d max)",
+                                 PDK_E2E_MAX_EXPOSED_STATES);
         return;
     }
     exposed_states[exposed_state_count].name = name;
@@ -455,7 +458,8 @@ void pdk_e2e_expose_float(const char *name, const float *ptr) {
 
 void pdk_e2e_expose_string(const char *name, const char **ptr) {
     if (exposed_state_count >= PDK_E2E_MAX_EXPOSED_STATES) {
-        pd->system->logToConsole("pdk_e2e: exposed state registry full (%d max)", PDK_E2E_MAX_EXPOSED_STATES);
+        pd->system->logToConsole("pdk_e2e: exposed state registry full (%d max)",
+                                 PDK_E2E_MAX_EXPOSED_STATES);
         return;
     }
     exposed_states[exposed_state_count].name = name;
@@ -471,11 +475,13 @@ void pdk_e2e_expose_string(const char *name, const char **ptr) {
 
 #ifdef PDK_E2E_TESTING
 
-int pdk_e2e_test_encode_message(uint8_t *out, uint8_t type, const uint8_t *payload, uint16_t payload_len) {
+int pdk_e2e_test_encode_message(uint8_t *out, uint8_t type, const uint8_t *payload,
+                                uint16_t payload_len) {
     return encode_message(out, type, payload, payload_len);
 }
 
-bool pdk_e2e_test_try_parse(const uint8_t *buf, uint16_t buf_len, uint8_t *out_type, uint16_t *out_payload_len, int *out_total_len) {
+bool pdk_e2e_test_try_parse(const uint8_t *buf, uint16_t buf_len, uint8_t *out_type,
+                            uint16_t *out_payload_len, int *out_total_len) {
     parsed_message msg;
     bool ok = try_parse_message(buf, buf_len, &msg);
     if (ok) {
@@ -514,9 +520,12 @@ void pdk_e2e_test_snapshot_buttons_no_real(void) {
 }
 
 void pdk_e2e_test_get_buttons(PDButtons *current, PDButtons *pushed, PDButtons *released) {
-    if (current != NULL) *current = snapshot_current;
-    if (pushed != NULL) *pushed = snapshot_pushed;
-    if (released != NULL) *released = snapshot_released;
+    if (current != NULL)
+        *current = snapshot_current;
+    if (pushed != NULL)
+        *pushed = snapshot_pushed;
+    if (released != NULL)
+        *released = snapshot_released;
 }
 
 void pdk_e2e_test_reset_button_state(void) {

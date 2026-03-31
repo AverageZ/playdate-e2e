@@ -26,17 +26,17 @@
 #define PDK_E2E_MSG_RELEASE_INPUT 0x05
 
 // Responses (game -> runner)
-#define PDK_E2E_MSG_PONG           0x81
-#define PDK_E2E_MSG_FRAME_DATA     0x82
-#define PDK_E2E_MSG_INPUT_ACK      0x83
-#define PDK_E2E_MSG_STATE_VALUE    0x84
+#define PDK_E2E_MSG_PONG            0x81
+#define PDK_E2E_MSG_FRAME_DATA      0x82
+#define PDK_E2E_MSG_INPUT_ACK       0x83
+#define PDK_E2E_MSG_STATE_VALUE     0x84
 #define PDK_E2E_MSG_STATE_NOT_FOUND 0x85
-#define PDK_E2E_MSG_READY          0xFE
-#define PDK_E2E_MSG_ERROR          0xFF
+#define PDK_E2E_MSG_READY           0xFE
+#define PDK_E2E_MSG_ERROR           0xFF
 
 // Framing: [1B type][2B payload length BE][payload]
-#define PDK_E2E_HEADER_SIZE     3
-#define PDK_E2E_MAX_PAYLOAD     0xFFFF
+#define PDK_E2E_HEADER_SIZE 3
+#define PDK_E2E_MAX_PAYLOAD 0xFFFF
 
 // Framebuffer: 52 bytes/row (50 data + 2 padding) x 240 rows
 #define PDK_E2E_FRAME_DATA_SIZE 12480

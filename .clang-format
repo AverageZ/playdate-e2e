@@ -1,0 +1,32 @@
+# playdate-e2e — clang-format config
+# Run: cd c && make format
+
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+# Pointer style: char *foo (C convention, not char* foo)
+PointerAlignment: Right
+
+# Braces on same line for functions and control flow
+BreakBeforeBraces: Attach
+
+# Don't reorder includes — Playdate SDK header order matters
+SortIncludes: Never
+
+# Single-line control flow
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+
+# Switch/case
+IndentCaseLabels: false
+
+# Alignment
+AlignConsecutiveAssignments: false
+AlignConsecutiveMacros: true
+
+# Space before parens in control flow, not function calls
+SpaceBeforeParens: ControlStatements

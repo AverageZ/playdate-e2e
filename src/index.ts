@@ -12,6 +12,8 @@ export {
 export type { DecodedPng } from './assert/FrameBuffer';
 export { compareScreenshot } from './assert/Screenshot';
 export type { CompareResult, ScreenshotOptions } from './assert/Screenshot';
+export { detectUpdateMode } from './assert/detectUpdateMode';
+export { resolveSnapshotDir } from './assert/resolveSnapshotDir';
 export {
   encodeMessage,
   ProtocolError,

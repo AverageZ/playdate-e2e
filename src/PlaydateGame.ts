@@ -1,8 +1,12 @@
+import type { SnapshotUpdateState } from 'vitest';
+
 import type { CompareResult, ScreenshotOptions } from './assert/Screenshot';
 import type { TcpServerOptions } from './connection/tcpServer';
 import type { Message } from './types';
 
+import { detectUpdateMode } from './assert/detectUpdateMode';
 import { xorFramebuffers } from './assert/FrameBuffer';
+import { resolveSnapshotDir } from './assert/resolveSnapshotDir';
 import { compareScreenshot } from './assert/Screenshot';
 import { TcpServer } from './connection/tcpServer';
 import {
@@ -121,27 +125,61 @@ export class PlaydateGame {
   /**
    * Capture a screenshot and compare against a reference PNG on disk.
    *
-   * - First run without updateMode: fails with a message to run with --update.
-   * - With updateMode: creates or overwrites the reference PNG.
-   * - Normal run: XOR comparison, fails if diff exceeds maxDiffPixels (default 0).
+   * Update mode and snapshot directory are auto-detected from vitest when omitted:
+   * - `--update` flag → overwrites all references
+   * - Default → compares, but auto-creates missing references (first-run)
+   * - Explicit `updateMode` / `snapshotDir` in options always takes precedence
    */
   async toMatchScreenshot(
     name: string,
-    options: ScreenshotOptions,
+    options?: ScreenshotOptions,
   ): Promise<CompareResult> {
+    const snapshotDir = resolveSnapshotDir(options?.snapshotDir);
+
+    // Determine effective update mode
+    let updateMode = options?.updateMode;
+    const vitestMode =
+      updateMode === undefined ? detectUpdateMode() : undefined;
+
+    if (updateMode === undefined) {
+      updateMode = vitestMode === 'all';
+    }
+
+    // Auto-create missing references only when vitest provides a mode and
+    // that mode is not 'none' (strict CI). When detectUpdateMode() returns
+    // undefined (not in vitest, or global setup missing), default to strict —
+    // never silently create references without explicit opt-in.
+    const autoCreateMissing =
+      options?.updateMode === undefined &&
+      vitestMode !== undefined &&
+      vitestMode !== 'none';
+
     const raw = await this.screenshot();
-    const result = await compareScreenshot(name, raw, options);
+    const resolved = {
+      maxDiffPixels: options?.maxDiffPixels,
+      snapshotDir,
+      updateMode,
+    };
+    const result = await compareScreenshot(name, raw, resolved);
 
     switch (result.status) {
       case 'missing':
+        if (autoCreateMissing) {
+          // AIDEV-NOTE: This re-enters compareScreenshot which does a redundant
+          // readFile (ENOENT) before writing. Accepted trade-off: one extra
+          // failed read per new screenshot, avoids restructuring compareScreenshot.
+          return compareScreenshot(name, raw, {
+            ...resolved,
+            updateMode: true,
+          });
+        }
         throw new Error(
-          `Screenshot "${name}" has no reference at ${result.referencePath}. ` +
-            'Run with --update to create it.',
+          `Screenshot "${name}" has no reference at ${result.referencePath}. ${this.missingReferenceHint(options?.updateMode, vitestMode)}`,
         );
       case 'fail':
         throw new Error(
           `Screenshot "${name}" differs by ${result.diffCount} pixels ` +
-            `(max: ${options.maxDiffPixels ?? 0}). ` +
+            `(max: ${options?.maxDiffPixels ?? 0}). ` +
             `Diff saved to: ${result.diffPath}`,
         );
       case 'created':
@@ -149,6 +187,26 @@ export class PlaydateGame {
       case 'pass':
         return result;
     }
+  }
+
+  private missingReferenceHint(
+    explicitUpdateMode: boolean | undefined,
+    vitestMode: SnapshotUpdateState | undefined,
+  ): string {
+    if (explicitUpdateMode === false) {
+      return 'updateMode is explicitly set to false. Remove the override or set updateMode: true to create it.';
+    }
+
+    if (vitestMode === undefined) {
+      return (
+        'Could not detect vitest update mode. ' +
+        'Either add playdate-e2e/vitest-setup to your vitest globalSetup, ' +
+        'or pass updateMode explicitly.'
+      );
+    }
+
+    // vitestMode === 'none' (strict CI mode)
+    return 'Run with --update to create it.';
   }
 
   /**

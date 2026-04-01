@@ -13,10 +13,15 @@ import {
 export type ScreenshotOptions = {
   /** Maximum number of differing pixels before failure. Default: 0 (exact match). */
   maxDiffPixels?: number;
-  /** Directory for screenshot references. Required. */
-  snapshotDir: string;
-  /** When true, create or overwrite references instead of comparing. */
+  /** Directory for screenshot references. Auto-resolved from test path when omitted in vitest. */
+  snapshotDir?: string;
+  /** When true, create or overwrite references instead of comparing. Auto-detected from --update flag in vitest. */
   updateMode?: boolean;
+};
+
+/** Internal type where snapshotDir has been resolved and is guaranteed present. */
+export type ResolvedScreenshotOptions = ScreenshotOptions & {
+  snapshotDir: string;
 };
 
 export type CompareResult = {
@@ -38,7 +43,7 @@ export type CompareResult = {
 export async function compareScreenshot(
   name: string,
   captured: Buffer,
-  options: ScreenshotOptions,
+  options: ResolvedScreenshotOptions,
 ): Promise<CompareResult> {
   const { maxDiffPixels = 0, snapshotDir, updateMode = false } = options;
   const referencePath = join(snapshotDir, `${name}.png`);

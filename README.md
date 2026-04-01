@@ -508,19 +508,37 @@ vitest run e2e/title.test.ts --update
 vitest run e2e/title.test.ts -t "shows title screen" --update
 ```
 
-**How it works:** `toMatchScreenshot()` detects update mode via vitest's `globalSetup` and `provide`/`inject`:
+**Setup:** Add playdate-e2e's global setup to your vitest config:
 
 ```typescript
-// vitest.globalSetup.ts
-export default function setup({ config, provide }) {
-  provide('updateSnapshots', config.snapshotOptions?.updateSnapshot === 'all');
-}
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
 
-// Inside toMatchScreenshot() — uses inject('updateSnapshots') to decide
-// whether to overwrite the reference PNG or compare against it.
+export default defineConfig({
+  test: {
+    globalSetup: ['playdate-e2e/vitest-setup'],
+  },
+});
 ```
 
-**First-run behavior:** When no reference PNG exists, the captured frame is saved as the new reference. The test passes and logs: `Screenshot "title-screen" created (no reference existed)`. This matches vitest's convention for new snapshots.
+**How it works:** The global setup reads vitest's `--update` flag and provides it to test workers via `provide`/`inject`. `toMatchScreenshot()` calls `inject('playdateUpdateSnapshots')` to detect the mode:
+
+- `vitest run --update` → overwrites all reference PNGs
+- `vitest run` (default) → compares against references, auto-creates missing ones (first-run)
+- `snapshotDir` auto-resolves to `__screenshots__/` next to the test file when omitted
+
+```typescript
+// Zero-config usage — snapshotDir and updateMode are auto-detected
+await game.toMatchScreenshot('title-screen');
+
+// Explicit options still work when needed
+await game.toMatchScreenshot('title-screen', {
+  snapshotDir: './custom/path',
+  maxDiffPixels: 10,
+});
+```
+
+**First-run behavior:** When no reference PNG exists, the captured frame is saved as the new reference. The test passes and logs: `[playdate-e2e] Created reference screenshot: <path>`. This matches vitest's convention for new snapshots.
 
 ---
 

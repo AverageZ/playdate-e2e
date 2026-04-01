@@ -49,6 +49,20 @@
 // Exposed-state registry limit
 #define PDK_E2E_MAX_EXPOSED_STATES 32
 
+// State query hook — allows external modules (e.g., Lua C extension) to handle
+// QUERY_STATE for names not in the C pointer registry.
+typedef struct {
+    bool found;
+    uint8_t type; // PDK_E2E_STATE_INT32, PDK_E2E_STATE_FLOAT32, or PDK_E2E_STATE_STRING
+    union {
+        int32_t i;
+        float f;
+        const char *s; // must remain valid until send completes (same frame)
+    } value;
+} pdk_e2e_state_result;
+
+typedef pdk_e2e_state_result (*pdk_e2e_state_query_fn)(const char *name);
+
 // Crank sentinel: no injection — pass through real hardware angle
 #define PDK_E2E_CRANK_NO_INJECT (-1.0f)
 
@@ -115,6 +129,13 @@ void pdk_e2e_expose_float(const char *name, const float *ptr);
  */
 void pdk_e2e_expose_string(const char *name, const char **ptr);
 
+/**
+ * Set a hook for QUERY_STATE lookups. If the C pointer registry has no match,
+ * this hook is called before sending STATE_NOT_FOUND. Used by pdk_e2e_ext.c
+ * to dispatch to Lua callbacks.
+ */
+void pdk_e2e_set_state_query_hook(pdk_e2e_state_query_fn fn);
+
 // AIDEV-NOTE: Device macros below reference `pd` directly — the game must have
 // a `PlaydateAPI *pd` variable in scope wherever these are called.
 #else // !TARGET_SIMULATOR — device builds compile to nothing
@@ -126,6 +147,7 @@ void pdk_e2e_expose_string(const char *name, const char **ptr);
 #define pdk_e2e_expose_int(name, ptr)    ((void)0)
 #define pdk_e2e_expose_float(name, ptr)  ((void)0)
 #define pdk_e2e_expose_string(name, ptr) ((void)0)
+#define pdk_e2e_set_state_query_hook(fn) ((void)0)
 
 #endif // TARGET_SIMULATOR
 

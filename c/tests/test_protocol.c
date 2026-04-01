@@ -29,6 +29,40 @@ extern void pdk_e2e_test_clear_injection(void);
 extern void pdk_e2e_test_snapshot_buttons_no_real(void);
 extern void pdk_e2e_test_get_buttons(PDButtons *current, PDButtons *pushed, PDButtons *released);
 extern void pdk_e2e_test_reset_button_state(void);
+extern void pdk_e2e_test_set_state_query_hook(pdk_e2e_state_query_fn fn);
+extern pdk_e2e_state_query_fn pdk_e2e_test_get_state_query_hook(void);
+extern void pdk_e2e_test_handle_query_state(const uint8_t *payload, uint16_t payload_len);
+extern void pdk_e2e_test_set_fake_pd(PlaydateAPI *fake_pd, PDTCPConnection *fake_conn);
+
+// --- Fake PD for integration tests ---
+// Captures bytes sent via pd->network->tcp->write() so we can verify
+// handle_query_state produces correct wire responses.
+
+static uint8_t captured_write_buf[4096];
+static int captured_write_len = 0;
+
+static int fake_tcp_write(PDTCPConnection *conn, const void *buf, int len) {
+    (void)conn;
+    if (captured_write_len + len <= (int)sizeof(captured_write_buf)) {
+        memcpy(captured_write_buf + captured_write_len, buf, len);
+        captured_write_len += len;
+    }
+    return len;
+}
+
+static void fake_log(const char *fmt, ...) {
+    (void)fmt;
+}
+
+static PlaydateTCP fake_tcp = {.write = fake_tcp_write};
+static PlaydateNetwork fake_network = {.tcp = &fake_tcp};
+static PlaydateSystem fake_system = {.logToConsole = fake_log, .error = fake_log};
+static PlaydateAPI fake_pd = {.system = &fake_system, .network = &fake_network};
+
+static void reset_capture(void) {
+    captured_write_len = 0;
+    memset(captured_write_buf, 0, sizeof(captured_write_buf));
+}
 
 // --- Helpers ---
 
@@ -644,6 +678,238 @@ static void test_parse_two_messages_back_to_back(void) {
     PASS();
 }
 
+// --- State query hook ---
+
+// Test hook that returns a fixed int32 for "lua_score", not-found otherwise
+static pdk_e2e_state_result hook_returns_int32(const char *name) {
+    pdk_e2e_state_result r = {.found = false};
+    if (strcmp(name, "lua_score") == 0) {
+        r.found = true;
+        r.type = PDK_E2E_STATE_INT32;
+        r.value.i = 99;
+    }
+    return r;
+}
+
+static pdk_e2e_state_result hook_returns_float32(const char *name) {
+    pdk_e2e_state_result r = {.found = false};
+    if (strcmp(name, "lua_speed") == 0) {
+        r.found = true;
+        r.type = PDK_E2E_STATE_FLOAT32;
+        r.value.f = 3.14f;
+    }
+    return r;
+}
+
+static pdk_e2e_state_result hook_returns_string(const char *name) {
+    pdk_e2e_state_result r = {.found = false};
+    if (strcmp(name, "lua_name") == 0) {
+        r.found = true;
+        r.type = PDK_E2E_STATE_STRING;
+        r.value.s = "hello";
+    }
+    return r;
+}
+
+static pdk_e2e_state_result hook_returns_not_found(const char *name) {
+    (void)name;
+    pdk_e2e_state_result r = {.found = false};
+    return r;
+}
+
+static void test_hook_returns_int32(void) {
+    TEST(hook_returns_int32);
+    pdk_e2e_test_set_state_query_hook(hook_returns_int32);
+
+    pdk_e2e_state_query_fn fn = pdk_e2e_test_get_state_query_hook();
+    assert(fn != NULL);
+
+    pdk_e2e_state_result r = fn("lua_score");
+    assert(r.found == true);
+    assert(r.type == PDK_E2E_STATE_INT32);
+    assert(r.value.i == 99);
+
+    // Unknown name should return not-found
+    r = fn("unknown");
+    assert(r.found == false);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
+static void test_hook_returns_float32(void) {
+    TEST(hook_returns_float32);
+    pdk_e2e_test_set_state_query_hook(hook_returns_float32);
+
+    pdk_e2e_state_query_fn fn = pdk_e2e_test_get_state_query_hook();
+    pdk_e2e_state_result r = fn("lua_speed");
+    assert(r.found == true);
+    assert(r.type == PDK_E2E_STATE_FLOAT32);
+    assert(fabsf(r.value.f - 3.14f) < 0.001f);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
+static void test_hook_returns_string(void) {
+    TEST(hook_returns_string);
+    pdk_e2e_test_set_state_query_hook(hook_returns_string);
+
+    pdk_e2e_state_query_fn fn = pdk_e2e_test_get_state_query_hook();
+    pdk_e2e_state_result r = fn("lua_name");
+    assert(r.found == true);
+    assert(r.type == PDK_E2E_STATE_STRING);
+    assert(strcmp(r.value.s, "hello") == 0);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
+static void test_hook_returns_not_found(void) {
+    TEST(hook_returns_not_found);
+    pdk_e2e_test_set_state_query_hook(hook_returns_not_found);
+
+    pdk_e2e_state_query_fn fn = pdk_e2e_test_get_state_query_hook();
+    pdk_e2e_state_result r = fn("anything");
+    assert(r.found == false);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
+static void test_hook_null_default(void) {
+    TEST(hook_null_default);
+    // After clearing, hook should be NULL
+    pdk_e2e_test_set_state_query_hook(NULL);
+    pdk_e2e_state_query_fn fn = pdk_e2e_test_get_state_query_hook();
+    assert(fn == NULL);
+    PASS();
+}
+
+static void test_hook_set_then_clear(void) {
+    TEST(hook_set_then_clear);
+    pdk_e2e_test_set_state_query_hook(hook_returns_int32);
+    assert(pdk_e2e_test_get_state_query_hook() != NULL);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    assert(pdk_e2e_test_get_state_query_hook() == NULL);
+    PASS();
+}
+
+// --- QUERY_STATE integration (hook fallback via handle_query_state) ---
+// These tests exercise the full handle_query_state path: C registry miss ->
+// hook fallback -> send_message -> captured bytes.
+
+// Build a null-terminated QUERY_STATE payload from a name string.
+static uint16_t make_query_payload(uint8_t *out, const char *name) {
+    uint16_t len = (uint16_t)(strlen(name) + 1);
+    memcpy(out, name, len);
+    return len;
+}
+
+static void test_handle_query_state_hook_int32(void) {
+    TEST(handle_query_state_hook_int32);
+    pdk_e2e_test_set_fake_pd(&fake_pd, NULL);
+    pdk_e2e_test_set_state_query_hook(hook_returns_int32);
+    reset_capture();
+
+    uint8_t payload[64];
+    uint16_t plen = make_query_payload(payload, "lua_score");
+    pdk_e2e_test_handle_query_state(payload, plen);
+
+    // Expected: [0x84][0x00, 0x05][0x00][99 as LE int32]
+    assert(captured_write_len == 3 + 5); // header + payload
+    assert(captured_write_buf[0] == PDK_E2E_MSG_STATE_VALUE);
+    assert(captured_write_buf[1] == 0x00);
+    assert(captured_write_buf[2] == 0x05); // payload len = 5
+    assert(captured_write_buf[3] == PDK_E2E_STATE_INT32);
+    int32_t val;
+    memcpy(&val, &captured_write_buf[4], 4);
+    assert(val == 99);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
+static void test_handle_query_state_hook_float32(void) {
+    TEST(handle_query_state_hook_float32);
+    pdk_e2e_test_set_fake_pd(&fake_pd, NULL);
+    pdk_e2e_test_set_state_query_hook(hook_returns_float32);
+    reset_capture();
+
+    uint8_t payload[64];
+    uint16_t plen = make_query_payload(payload, "lua_speed");
+    pdk_e2e_test_handle_query_state(payload, plen);
+
+    assert(captured_write_len == 3 + 5);
+    assert(captured_write_buf[0] == PDK_E2E_MSG_STATE_VALUE);
+    assert(captured_write_buf[3] == PDK_E2E_STATE_FLOAT32);
+    float fval;
+    memcpy(&fval, &captured_write_buf[4], 4);
+    assert(fabsf(fval - 3.14f) < 0.001f);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
+static void test_handle_query_state_hook_string(void) {
+    TEST(handle_query_state_hook_string);
+    pdk_e2e_test_set_fake_pd(&fake_pd, NULL);
+    pdk_e2e_test_set_state_query_hook(hook_returns_string);
+    reset_capture();
+
+    uint8_t payload[64];
+    uint16_t plen = make_query_payload(payload, "lua_name");
+    pdk_e2e_test_handle_query_state(payload, plen);
+
+    // Expected: [0x84][0x00, 0x07][0x02]['h','e','l','l','o', 0x00]
+    assert(captured_write_len == 3 + 7); // header + 1B tag + "hello\0"
+    assert(captured_write_buf[0] == PDK_E2E_MSG_STATE_VALUE);
+    assert(captured_write_buf[3] == PDK_E2E_STATE_STRING);
+    assert(strcmp((const char *)&captured_write_buf[4], "hello") == 0);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
+static void test_handle_query_state_hook_not_found(void) {
+    TEST(handle_query_state_hook_not_found);
+    pdk_e2e_test_set_fake_pd(&fake_pd, NULL);
+    pdk_e2e_test_set_state_query_hook(hook_returns_not_found);
+    reset_capture();
+
+    uint8_t payload[64];
+    uint16_t plen = make_query_payload(payload, "no_such_key");
+    pdk_e2e_test_handle_query_state(payload, plen);
+
+    // Hook returns not-found, so should get STATE_NOT_FOUND (0x85, empty payload)
+    assert(captured_write_len == 3);
+    assert(captured_write_buf[0] == PDK_E2E_MSG_STATE_NOT_FOUND);
+    assert(captured_write_buf[1] == 0x00);
+    assert(captured_write_buf[2] == 0x00);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
+static void test_handle_query_state_no_hook(void) {
+    TEST(handle_query_state_no_hook);
+    pdk_e2e_test_set_fake_pd(&fake_pd, NULL);
+    pdk_e2e_test_set_state_query_hook(NULL);
+    reset_capture();
+
+    uint8_t payload[64];
+    uint16_t plen = make_query_payload(payload, "anything");
+    pdk_e2e_test_handle_query_state(payload, plen);
+
+    // No hook, no C registry match — STATE_NOT_FOUND
+    assert(captured_write_len == 3);
+    assert(captured_write_buf[0] == PDK_E2E_MSG_STATE_NOT_FOUND);
+
+    pdk_e2e_test_set_state_query_hook(NULL);
+    PASS();
+}
+
 // --- Main ---
 
 int main(void) {
@@ -691,6 +957,21 @@ int main(void) {
     test_button_noop_reinjection();
     test_get_buttons_consistent();
     test_get_buttons_null_pointers();
+
+    printf("\nState query hook:\n");
+    test_hook_returns_int32();
+    test_hook_returns_float32();
+    test_hook_returns_string();
+    test_hook_returns_not_found();
+    test_hook_null_default();
+    test_hook_set_then_clear();
+
+    printf("\nQUERY_STATE integration (hook fallback):\n");
+    test_handle_query_state_hook_int32();
+    test_handle_query_state_hook_float32();
+    test_handle_query_state_hook_string();
+    test_handle_query_state_hook_not_found();
+    test_handle_query_state_no_hook();
 
     printf("\n=== %d/%d tests passed ===\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

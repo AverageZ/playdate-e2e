@@ -4,6 +4,7 @@ node_modules/
 *.o
 *.d
 *.dSYM/
+c/tests/test_protocol
 compile_commands.json
 .DS_Store
 .vscode/

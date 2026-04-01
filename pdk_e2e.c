@@ -51,6 +51,10 @@ typedef struct {
 static exposed_state_entry exposed_states[PDK_E2E_MAX_EXPOSED_STATES];
 static int exposed_state_count = 0;
 
+// State query hook — fallback for names not in the C pointer registry.
+// Set by pdk_e2e_ext.c to dispatch QUERY_STATE to Lua callbacks.
+static pdk_e2e_state_query_fn state_query_hook = NULL;
+
 // --- Message encoding ---
 
 // AIDEV-NOTE: encode_message and parse helpers are pure functions over buffers,
@@ -227,6 +231,26 @@ static void handle_query_state(const uint8_t *payload, uint16_t payload_len) {
         }
     }
 
+    // Fallback: try the state query hook (e.g., Lua callback dispatch)
+    if (state_query_hook != NULL) {
+        pdk_e2e_state_result result = state_query_hook(name);
+        if (result.found) {
+            switch (result.type) {
+            case PDK_E2E_STATE_INT32:
+                send_state_int32(result.value.i);
+                return;
+            case PDK_E2E_STATE_FLOAT32:
+                send_state_float32(result.value.f);
+                return;
+            case PDK_E2E_STATE_STRING:
+                send_state_string(result.value.s);
+                return;
+            default:
+                break;
+            }
+        }
+    }
+
     send_empty(PDK_E2E_MSG_STATE_NOT_FOUND);
 }
 
@@ -357,6 +381,7 @@ void pdk_e2e_init(PlaydateAPI *playdate, int port) {
     snapshot_pushed = 0;
     snapshot_released = 0;
     exposed_state_count = 0;
+    state_query_hook = NULL;
 
     pd->network->tcp->requestAccess(on_access_granted);
     pd->system->logToConsole("pdk_e2e: requesting network access (port %d)", port);
@@ -468,6 +493,10 @@ void pdk_e2e_expose_string(const char *name, const char **ptr) {
     exposed_state_count++;
 }
 
+void pdk_e2e_set_state_query_hook(pdk_e2e_state_query_fn fn) {
+    state_query_hook = fn;
+}
+
 // --- Test-only API ---
 // These wrappers expose internal functions for unit testing without the SDK.
 // They are compiled into the test binary but not into game builds (the test
@@ -570,6 +599,27 @@ int pdk_e2e_test_encode_state_string(uint8_t *out, const char *value) {
 int pdk_e2e_test_encode_error(uint8_t *out, const char *msg) {
     uint16_t len = (uint16_t)(strlen(msg) + 1);
     return encode_message(out, PDK_E2E_MSG_ERROR, (const uint8_t *)msg, len);
+}
+
+void pdk_e2e_test_set_state_query_hook(pdk_e2e_state_query_fn fn) {
+    state_query_hook = fn;
+}
+
+pdk_e2e_state_query_fn pdk_e2e_test_get_state_query_hook(void) {
+    return state_query_hook;
+}
+
+// Expose handle_query_state for integration tests.
+// Requires pd and tcp_conn to be set (use pdk_e2e_test_set_fake_pd).
+void pdk_e2e_test_handle_query_state(const uint8_t *payload, uint16_t payload_len) {
+    handle_query_state(payload, payload_len);
+}
+
+// Set a fake PlaydateAPI and TCP connection so send_message works in tests.
+void pdk_e2e_test_set_fake_pd(PlaydateAPI *fake_pd, PDTCPConnection *fake_conn) {
+    pd = fake_pd;
+    tcp_conn = fake_conn;
+    exposed_state_count = 0;
 }
 
 #endif // PDK_E2E_TESTING

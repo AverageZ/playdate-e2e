@@ -13,7 +13,10 @@
       "Bash(pnpm test:*)",
       "Bash(pnpm build:*)",
       "Bash(pnpm format:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Skill(playdate-sdk)",
+      "Skill(playdate-sdk:*)",
+      "Bash(make test:*)"
     ]
   },
   "hooks": {

@@ -34,10 +34,10 @@ $(TEST_BIN): $(TEST_SRC) $(SRC) $(HDR) tests/stubs/pd_api.h
 	$(CC) $(CFLAGS) $(TEST_DEFINES) $(TEST_INCLUDES) -o $@ $(TEST_SRC) $(SRC) -lm
 
 format:
-	$(CLANG_FORMAT) -i $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(TEST_SRC)
+	$(CLANG_FORMAT) -i $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(ROOT)/pdk_e2e_ext.c $(TEST_SRC)
 
 format-check:
-	$(CLANG_FORMAT) --dry-run --Werror $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(TEST_SRC)
+	$(CLANG_FORMAT) --dry-run --Werror $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(ROOT)/pdk_e2e_ext.c $(TEST_SRC)
 
 lint:
 	$(CLANG_TIDY) $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c -- $(TEST_DEFINES) $(TEST_INCLUDES)

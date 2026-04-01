@@ -383,3 +383,350 @@ describe('PlaydateGame', () => {
     await expect(game.queryInt('score')).rejects.toThrow(/timed out/);
   });
 });
+
+// Helper: create a connected PlaydateGame with a mock client
+async function setupGame(timeout = 2000) {
+  const { TcpServer } = await import('./connection/tcpServer');
+  const server = new TcpServer({ port: 0, timeout });
+  await server.listen();
+  const client = await connectMockGame(server.listeningPort);
+  await server.waitForConnection(1000);
+  await server.waitForReady(1000);
+  const game = PlaydateGame.fromServer(server, timeout);
+  const parser = new ProtocolParser();
+
+  return { game, mockClient: client, parser, server };
+}
+
+describe('waitUntilScreenChanges', () => {
+  let game: PlaydateGame | null = null;
+  let mockClient: Socket | null = null;
+
+  afterEach(async () => {
+    mockClient?.destroy();
+    mockClient = null;
+    await game?.close();
+    game = null;
+  });
+
+  it('resolves when the screen changes', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    const frameA = Buffer.alloc(FRAME_DATA_SIZE, 0x00);
+    const frameB = Buffer.alloc(FRAME_DATA_SIZE, 0xff);
+    let captureCount = 0;
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_CAPTURE_FRAME) {
+          captureCount++;
+          // First capture is baseline, subsequent captures return frameA then frameB
+          const frame = captureCount <= 3 ? frameA : frameB;
+          mockClient!.write(
+            encodeMessage({ framebuffer: frame, type: MSG_FRAME_DATA }),
+          );
+        }
+      }
+    });
+
+    await game.waitUntilScreenChanges({ timeout: 2000 });
+    // Baseline capture + at least one more that differs
+    expect(captureCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('resolves on first poll if frame already differs', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    let captureCount = 0;
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_CAPTURE_FRAME) {
+          captureCount++;
+          // Every capture returns a different frame
+          const frame = Buffer.alloc(FRAME_DATA_SIZE, captureCount);
+          mockClient!.write(
+            encodeMessage({ framebuffer: frame, type: MSG_FRAME_DATA }),
+          );
+        }
+      }
+    });
+
+    await game.waitUntilScreenChanges({ timeout: 2000 });
+    // Baseline + one poll = 2 captures
+    expect(captureCount).toBe(2);
+  });
+
+  it('times out when screen never changes', async () => {
+    const setup = await setupGame(300);
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    const staticFrame = Buffer.alloc(FRAME_DATA_SIZE, 0xaa);
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_CAPTURE_FRAME) {
+          mockClient!.write(
+            encodeMessage({ framebuffer: staticFrame, type: MSG_FRAME_DATA }),
+          );
+        }
+      }
+    });
+
+    await expect(game.waitUntilScreenChanges({ timeout: 300 })).rejects.toThrow(
+      /waitUntilScreenChanges timed out/,
+    );
+  });
+});
+
+describe('waitUntilState', () => {
+  let game: PlaydateGame | null = null;
+  let mockClient: Socket | null = null;
+
+  afterEach(async () => {
+    mockClient?.destroy();
+    mockClient = null;
+    await game?.close();
+    game = null;
+  });
+
+  it('resolves when predicate matches and returns the value', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    let queryCount = 0;
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_QUERY_STATE) {
+          queryCount++;
+          mockClient!.write(
+            encodeMessage({
+              stateType: StateType.Int32,
+              type: MSG_STATE_VALUE,
+              value: queryCount,
+            }),
+          );
+        }
+      }
+    });
+
+    const result = await game.waitUntilState<number>('score', (v) => v >= 3, {
+      timeout: 2000,
+    });
+    expect(result).toBe(3);
+    expect(queryCount).toBe(3);
+  });
+
+  it('throws immediately on STATE_NOT_FOUND', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_QUERY_STATE) {
+          mockClient!.write(encodeMessage({ type: MSG_STATE_NOT_FOUND }));
+        }
+      }
+    });
+
+    await expect(
+      game.waitUntilState('missing', () => true, { timeout: 2000 }),
+    ).rejects.toThrow(/not registered/);
+  });
+
+  it('times out when predicate never matches', async () => {
+    const setup = await setupGame(300);
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_QUERY_STATE) {
+          mockClient!.write(
+            encodeMessage({
+              stateType: StateType.Int32,
+              type: MSG_STATE_VALUE,
+              value: 0,
+            }),
+          );
+        }
+      }
+    });
+
+    await expect(
+      game.waitUntilState<number>('score', (v) => v > 100, { timeout: 300 }),
+    ).rejects.toThrow(/waitUntilState\("score"\) timed out/);
+  });
+
+  it('works with string state values', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    let queryCount = 0;
+    const states = ['loading', 'loading', 'ready'];
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_QUERY_STATE) {
+          const value = states[queryCount] ?? 'ready';
+          queryCount++;
+          mockClient!.write(
+            encodeMessage({
+              stateType: StateType.String,
+              type: MSG_STATE_VALUE,
+              value,
+            }),
+          );
+        }
+      }
+    });
+
+    const result = await game.waitUntilState<string>(
+      'screen',
+      (v) => v === 'ready',
+      { timeout: 2000 },
+    );
+    expect(result).toBe('ready');
+  });
+});
+
+describe('waitUntilStable', () => {
+  let game: PlaydateGame | null = null;
+  let mockClient: Socket | null = null;
+
+  afterEach(async () => {
+    mockClient?.destroy();
+    mockClient = null;
+    await game?.close();
+    game = null;
+  });
+
+  it('resolves after 3 consecutive identical frames (default)', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    const stableFrame = Buffer.alloc(FRAME_DATA_SIZE, 0xff);
+    let captureCount = 0;
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_CAPTURE_FRAME) {
+          captureCount++;
+          // First 2 captures change, then stable from capture 3 onward
+          const frame =
+            captureCount <= 2
+              ? Buffer.alloc(FRAME_DATA_SIZE, captureCount)
+              : stableFrame;
+          mockClient!.write(
+            encodeMessage({ framebuffer: frame, type: MSG_FRAME_DATA }),
+          );
+        }
+      }
+    });
+
+    await game.waitUntilStable({ timeout: 2000 });
+    // Initial capture + frames until 3 consecutive identical
+    expect(captureCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('respects custom settleFrames option', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    const stableFrame = Buffer.alloc(FRAME_DATA_SIZE, 0xaa);
+    let captureCount = 0;
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_CAPTURE_FRAME) {
+          captureCount++;
+          // Always return the same frame — should settle in exactly settleFrames polls
+          mockClient!.write(
+            encodeMessage({ framebuffer: stableFrame, type: MSG_FRAME_DATA }),
+          );
+        }
+      }
+    });
+
+    await game.waitUntilStable({ settleFrames: 5, timeout: 2000 });
+    // Initial capture + 5 identical polls = 6 total captures
+    expect(captureCount).toBe(6);
+  });
+
+  it('resets settle counter on intermittent change', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    let captureCount = 0;
+    // Pattern: stable, stable, CHANGE, stable, stable, stable (settles after the change)
+    // Captures: 1=initial, 2=same(1), 3=same(2), 4=diff(reset), 5=same(1), 6=same(2), 7=same(3=settle)
+    const stableFrame = Buffer.alloc(FRAME_DATA_SIZE, 0xbb);
+    const differentFrame = Buffer.alloc(FRAME_DATA_SIZE, 0xcc);
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_CAPTURE_FRAME) {
+          captureCount++;
+          // Capture 4 is different, all others are stable
+          const frame = captureCount === 4 ? differentFrame : stableFrame;
+          mockClient!.write(
+            encodeMessage({ framebuffer: frame, type: MSG_FRAME_DATA }),
+          );
+        }
+      }
+    });
+
+    await game.waitUntilStable({ timeout: 2000 });
+    // 1(baseline=bb) + 2(bb,settle=1) + 3(bb,settle=2) + 4(cc,diff,reset,prev=cc)
+    // + 5(bb,diff from cc,reset,prev=bb) + 6(bb,settle=1) + 7(bb,settle=2) + 8(bb,settle=3→done)
+    expect(captureCount).toBe(8);
+  });
+
+  it('times out when frames keep changing', async () => {
+    const setup = await setupGame(300);
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    let captureCount = 0;
+
+    mockClient.on('data', (chunk: Buffer) => {
+      setup.parser.push(chunk);
+      for (const msg of setup.parser.parse()) {
+        if (msg.type === MSG_CAPTURE_FRAME) {
+          captureCount++;
+          // Every frame is different
+          const frame = Buffer.alloc(FRAME_DATA_SIZE, captureCount % 256);
+          mockClient!.write(
+            encodeMessage({ framebuffer: frame, type: MSG_FRAME_DATA }),
+          );
+        }
+      }
+    });
+
+    await expect(game.waitUntilStable({ timeout: 300 })).rejects.toThrow(
+      /waitUntilStable timed out/,
+    );
+  });
+});

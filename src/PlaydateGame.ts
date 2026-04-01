@@ -2,6 +2,7 @@ import type { CompareResult, ScreenshotOptions } from './assert/Screenshot';
 import type { TcpServerOptions } from './connection/tcpServer';
 import type { Message } from './types';
 
+import { xorFramebuffers } from './assert/FrameBuffer';
 import { compareScreenshot } from './assert/Screenshot';
 import { TcpServer } from './connection/tcpServer';
 import {
@@ -237,6 +238,109 @@ export class PlaydateGame {
     const stateMsg = response as Message & { type: typeof MSG_STATE_VALUE };
 
     return { stateType: stateMsg.stateType, value: stateMsg.value };
+  }
+
+  /**
+   * Wait until the framebuffer differs from the current frame.
+   * Captures a baseline, then polls each frame until pixels change.
+   * Each screenshot() call advances one game frame (CAPTURE_FRAME round-trip).
+   * Throws if timeout is reached without a change.
+   */
+  async waitUntilScreenChanges(options?: { timeout?: number }): Promise<void> {
+    const timeout = options?.timeout ?? this.timeout;
+    const deadline = Date.now() + timeout;
+    const baseline = await this.screenshot();
+
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new Error(
+          `waitUntilScreenChanges timed out after ${timeout}ms — ` +
+            'the screen did not change. Check that the game is updating its display.',
+        );
+      }
+
+      const current = await this.screenshot();
+      const { diffCount } = xorFramebuffers(baseline, current);
+      if (diffCount > 0) {
+        return;
+      }
+    }
+  }
+
+  /**
+   * Wait until a named state value satisfies a predicate.
+   * Polls QUERY_STATE each frame until the predicate returns true.
+   * Each queryState() call advances one game frame (QUERY_STATE round-trip).
+   * Throws immediately if the state name is not registered.
+   * Throws if timeout is reached without the predicate returning true.
+   */
+  async waitUntilState<T extends number | string>(
+    name: string,
+    predicate: (value: T) => boolean,
+    options?: { timeout?: number },
+  ): Promise<T> {
+    const timeout = options?.timeout ?? this.timeout;
+    const deadline = Date.now() + timeout;
+
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new Error(
+          `waitUntilState("${name}") timed out after ${timeout}ms — ` +
+            'predicate never returned true.',
+        );
+      }
+
+      // queryState throws on STATE_NOT_FOUND — let it propagate immediately
+      const { value } = await this.queryState(name);
+      // queryState returns number | string; T narrows this via the caller's type param
+      const typed = value as T;
+      if (predicate(typed)) {
+        return typed;
+      }
+    }
+  }
+
+  /**
+   * Wait until the framebuffer stops changing for N consecutive frames.
+   * Useful for waiting for animations to complete.
+   * Each screenshot() call advances one game frame (CAPTURE_FRAME round-trip).
+   * Default settleFrames: 3. Throws if timeout is reached.
+   */
+  async waitUntilStable(options?: {
+    settleFrames?: number;
+    timeout?: number;
+  }): Promise<void> {
+    const timeout = options?.timeout ?? this.timeout;
+    const settleTarget = options?.settleFrames ?? 3;
+    const deadline = Date.now() + timeout;
+
+    let previous = await this.screenshot();
+    let settleCount = 0;
+
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new Error(
+          `waitUntilStable timed out after ${timeout}ms — ` +
+            `screen was still changing (reached ${settleCount}/${settleTarget} consecutive identical frames).`,
+        );
+      }
+
+      const current = await this.screenshot();
+      const { diffCount } = xorFramebuffers(previous, current);
+
+      if (diffCount === 0) {
+        settleCount++;
+        if (settleCount >= settleTarget) {
+          return;
+        }
+      } else {
+        settleCount = 0;
+        previous = current;
+      }
+    }
   }
 
   /** Send a protocol message and wait for a response of the expected type. */

@@ -25,13 +25,22 @@ TEST_BIN     := tests/test_protocol
 TEST_INCLUDES := -Itests/stubs -I$(ROOT)
 TEST_DEFINES  := -DTARGET_SIMULATOR=1 -DPDK_E2E_TESTING
 
-.PHONY: test format format-check lint clean
+# Integration test — standalone C binary with POSIX TCP (no simulator)
+INTEG_SRC    := tests/test_integration.c
+INTEG_BIN    := tests/test_integration
+
+.PHONY: test integration format format-check lint clean
 
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
+integration: $(INTEG_BIN)
+
 $(TEST_BIN): $(TEST_SRC) $(SRC) $(HDR) tests/stubs/pd_api.h
 	$(CC) $(CFLAGS) $(TEST_DEFINES) $(TEST_INCLUDES) -o $@ $(TEST_SRC) $(SRC) -lm
+
+$(INTEG_BIN): $(INTEG_SRC) $(SRC) $(HDR) tests/posix_tcp_shim.h tests/stubs/pd_api.h
+	$(CC) $(CFLAGS) $(TEST_DEFINES) $(TEST_INCLUDES) -o $@ $(INTEG_SRC) $(SRC) -lm
 
 format:
 	$(CLANG_FORMAT) -i $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c $(ROOT)/pdk_e2e_ext.c $(TEST_SRC)
@@ -43,4 +52,4 @@ lint:
 	$(CLANG_TIDY) $(ROOT)/pdk_e2e.h $(ROOT)/pdk_e2e.c -- $(TEST_DEFINES) $(TEST_INCLUDES)
 
 clean:
-	rm -f $(TEST_BIN)
+	rm -f $(TEST_BIN) $(INTEG_BIN)

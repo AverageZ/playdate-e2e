@@ -16,7 +16,9 @@
       "Bash(git log:*)",
       "Skill(playdate-sdk)",
       "Skill(playdate-sdk:*)",
-      "Bash(make test:*)"
+      "Bash(make test:*)",
+      "Bash(make -C c test)",
+      "Bash(make -C c lint)"
     ]
   },
   "hooks": {

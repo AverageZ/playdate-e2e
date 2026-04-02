@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'child_process';
 import type { SnapshotUpdateState } from 'vitest';
 
 import type { CompareResult, ScreenshotOptions } from './assert/Screenshot';
@@ -9,6 +10,12 @@ import { xorFramebuffers } from './assert/FrameBuffer';
 import { resolveSnapshotDir } from './assert/resolveSnapshotDir';
 import { compareScreenshot } from './assert/Screenshot';
 import { TcpServer } from './connection/tcpServer';
+import {
+  killSimulator,
+  resolveSimulatorPath,
+  spawnSimulator,
+  validatePdxPath,
+} from './lifecycle/Launcher';
 import {
   CRANK_NO_INJECT,
   MSG_CAPTURE_FRAME,
@@ -30,49 +37,82 @@ export type LaunchOptions = {
   port?: number;
   /** Timeout in ms for connection + READY. Default: 10000 */
   timeout?: number;
+  /** Override PLAYDATE_SDK_PATH. Default: reads from env. */
+  sdkPath?: string;
+  /** If false, skip simulator spawn (assume already running). Default: true. */
+  autoLaunch?: boolean;
 };
 
 /**
  * Connects to a Playdate game running in the simulator and provides
  * frame-synced test control via the wire protocol.
  *
- * Phase 1: TCP connection + PING/PONG frame sync only.
- * Simulator launch (Phase 5) is not yet implemented — the caller must
- * start the simulator manually or the game must already be running.
+ * By default, `launch()` spawns the simulator automatically using
+ * PLAYDATE_SDK_PATH. Set `autoLaunch: false` to connect to an
+ * already-running simulator instead.
  */
 export class PlaydateGame {
   private server: TcpServer;
   private timeout: number;
+  private simulatorProcess: ChildProcess | null;
+  private closed = false;
   private queryInFlight = false;
   private lastCrankAngle: number = CRANK_NO_INJECT;
 
-  private constructor(server: TcpServer, timeout: number) {
+  private constructor(
+    server: TcpServer,
+    timeout: number,
+    simulatorProcess: ChildProcess | null = null,
+  ) {
     this.server = server;
     this.timeout = timeout;
+    this.simulatorProcess = simulatorProcess;
   }
 
   /**
-   * Start a TCP server and wait for the game to connect and send READY.
+   * Launch the simulator with a .pdx game, start a TCP server, and wait
+   * for the game to connect and send READY.
    *
-   * AIDEV-NOTE: Phase 1 does not launch the simulator. The game must
-   * already be running and calling pdk_e2e_init() to connect.
+   * Set `autoLaunch: false` to skip simulator spawning (assumes the
+   * simulator is already running with the game loaded).
    */
   static async launch(
-    _pdxPath: string,
+    pdxPath: string,
     options?: LaunchOptions,
   ): Promise<PlaydateGame> {
+    const autoLaunch = options?.autoLaunch ?? true;
+    const timeout = options?.timeout ?? 10_000;
+
+    let simulatorProcess: ChildProcess | null = null;
+
     const serverOpts: TcpServerOptions = {
       port: options?.port,
       timeout: options?.timeout,
     };
     const server = new TcpServer(serverOpts);
-    const timeout = options?.timeout ?? 10_000;
 
-    await server.listen();
-    await server.waitForConnection(timeout);
-    await server.waitForReady(timeout);
+    try {
+      // Bind the TCP server BEFORE spawning the simulator so it can connect
+      await server.listen();
 
-    return new PlaydateGame(server, timeout);
+      if (autoLaunch) {
+        validatePdxPath(pdxPath);
+        const simulatorPath = resolveSimulatorPath(options?.sdkPath);
+        simulatorProcess = spawnSimulator(simulatorPath, pdxPath);
+      }
+
+      await server.waitForConnection(timeout);
+      await server.waitForReady(timeout);
+    } catch (err) {
+      // Clean up simulator if connection fails
+      if (simulatorProcess) {
+        await killSimulator(simulatorProcess);
+      }
+      await server.close();
+      throw err;
+    }
+
+    return new PlaydateGame(server, timeout, simulatorProcess);
   }
 
   /**
@@ -84,12 +124,19 @@ export class PlaydateGame {
   }
 
   /**
-   * Close the connection and stop the TCP server.
-   *
-   * AIDEV-NOTE: Phase 5 will also kill the simulator process here.
+   * Close the connection, stop the TCP server, and kill the simulator
+   * process if one was spawned by launch(). Safe to call multiple times.
    */
   async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+
     await this.server.close();
+
+    if (this.simulatorProcess) {
+      await killSimulator(this.simulatorProcess);
+      this.simulatorProcess = null;
+    }
   }
 
   /**

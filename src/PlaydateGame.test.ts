@@ -6,16 +6,21 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { encodeMessage, ProtocolParser } from './connection/protocol';
 import { PlaydateGame } from './PlaydateGame';
 import {
+  CRANK_NO_INJECT,
   FRAME_DATA_SIZE,
   MSG_CAPTURE_FRAME,
   MSG_ERROR,
   MSG_FRAME_DATA,
+  MSG_INJECT_INPUT,
+  MSG_INPUT_ACK,
   MSG_PING,
   MSG_PONG,
   MSG_QUERY_STATE,
   MSG_READY,
+  MSG_RELEASE_INPUT,
   MSG_STATE_NOT_FOUND,
   MSG_STATE_VALUE,
+  PlaydateButton,
   StateType,
 } from './types';
 
@@ -728,5 +733,403 @@ describe('waitUntilStable', () => {
     await expect(game.waitUntilStable({ timeout: 300 })).rejects.toThrow(
       /waitUntilStable timed out/,
     );
+  });
+});
+
+// Helper: set up mock client to respond to input commands with INPUT_ACK,
+// and record all received messages for assertions.
+// Uses a fresh ProtocolParser to avoid sharing state with the connection handshake parser.
+function setupInputHandler(
+  mockClient: Socket,
+  received: { type: number; buttons?: number; crankAngle?: number }[],
+) {
+  const parser = new ProtocolParser();
+  mockClient.on('data', (chunk: Buffer) => {
+    parser.push(chunk);
+    for (const msg of parser.parse()) {
+      if (msg.type === MSG_INJECT_INPUT) {
+        received.push({
+          buttons: msg.buttons,
+          crankAngle: msg.crankAngle,
+          type: msg.type,
+        });
+        mockClient.write(encodeMessage({ type: MSG_INPUT_ACK }));
+      } else if (msg.type === MSG_RELEASE_INPUT) {
+        received.push({ type: msg.type });
+        mockClient.write(encodeMessage({ type: MSG_INPUT_ACK }));
+      } else if (msg.type === MSG_PING) {
+        received.push({ type: msg.type });
+        mockClient.write(encodeMessage({ type: MSG_PONG }));
+      }
+    }
+  });
+}
+
+describe('input helpers', () => {
+  let game: PlaydateGame | null = null;
+  let mockClient: Socket | null = null;
+
+  afterEach(async () => {
+    mockClient?.destroy();
+    mockClient = null;
+    await game?.close();
+    game = null;
+  });
+
+  it('pressA sends INJECT_INPUT with A button', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.pressA();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.A,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('pressB sends INJECT_INPUT with B button', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.pressB();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.B,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('dpadUp sends INJECT_INPUT with Up button', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.dpadUp();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.Up,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('pressButtons combines multiple buttons with OR', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.pressButtons(PlaydateButton.A, PlaydateButton.Up);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.A | PlaydateButton.Up,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('pressButtons with no arguments throws', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    await expect(game.pressButtons()).rejects.toThrow(/at least one button/);
+  });
+
+  it('setCrank sends INJECT_INPUT with crank angle and no buttons', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.setCrank(90);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: 0,
+      crankAngle: 90,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('rotateCrank from cold start treats base as 0', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.rotateCrank(45);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: 0,
+      crankAngle: 45,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('rotateCrank accumulates from last setCrank angle', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.setCrank(90);
+    await game.rotateCrank(30);
+
+    expect(received).toHaveLength(2);
+    expect(received[1]).toEqual({
+      buttons: 0,
+      crankAngle: 120,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('releaseInput sends RELEASE_INPUT and resets crank state', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.setCrank(90);
+    await game.releaseInput();
+    await game.rotateCrank(10);
+
+    expect(received).toHaveLength(3);
+    // releaseInput sent RELEASE_INPUT
+    expect(received[1]).toEqual({ type: MSG_RELEASE_INPUT });
+    // rotateCrank after release starts from 0, not 90
+    expect(received[2]).toEqual({
+      buttons: 0,
+      crankAngle: 10,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('tap presses, waits frames, then releases', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.tap(PlaydateButton.A, 3);
+
+    // Expected sequence: INJECT_INPUT, PING x3, RELEASE_INPUT
+    expect(received).toHaveLength(5);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.A,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+    expect(received[1]).toEqual({ type: MSG_PING });
+    expect(received[2]).toEqual({ type: MSG_PING });
+    expect(received[3]).toEqual({ type: MSG_PING });
+    expect(received[4]).toEqual({ type: MSG_RELEASE_INPUT });
+  });
+
+  it('dpadDown sends INJECT_INPUT with Down button', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.dpadDown();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.Down,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('dpadLeft sends INJECT_INPUT with Left button', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.dpadLeft();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.Left,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('dpadRight sends INJECT_INPUT with Right button', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.dpadRight();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.Right,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('pressButtons preserves active crank angle', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.setCrank(90);
+    await game.pressA();
+
+    expect(received).toHaveLength(2);
+    // pressA should preserve the previously-set crank angle
+    expect(received[1]).toEqual({
+      buttons: PlaydateButton.A,
+      crankAngle: 90,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('setCrank overrides previous rotateCrank angle', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.rotateCrank(45);
+    await game.setCrank(10);
+
+    expect(received).toHaveLength(2);
+    expect(received[1]).toEqual({
+      buttons: 0,
+      crankAngle: 10,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('rotateCrank past 360 does not normalize', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.setCrank(350);
+    await game.rotateCrank(30);
+
+    expect(received).toHaveLength(2);
+    // 350 + 30 = 380, no wrapping to 20
+    expect(received[1]).toEqual({
+      buttons: 0,
+      crankAngle: 380,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('setCrank accepts negative angles', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.setCrank(-45);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      buttons: 0,
+      crankAngle: -45,
+      type: MSG_INJECT_INPUT,
+    });
+  });
+
+  it('tap with 0 holdFrames sends press then immediate release', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.tap(PlaydateButton.B, 0);
+
+    // No PINGs between press and release
+    expect(received).toHaveLength(2);
+    expect(received[0]).toEqual({
+      buttons: PlaydateButton.B,
+      crankAngle: CRANK_NO_INJECT,
+      type: MSG_INJECT_INPUT,
+    });
+    expect(received[1]).toEqual({ type: MSG_RELEASE_INPUT });
+  });
+
+  it('waitMs resolves after the specified duration', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+
+    const start = Date.now();
+    await game.waitMs(50);
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeGreaterThanOrEqual(40);
+  });
+
+  it('waitMs does not send protocol messages', async () => {
+    const setup = await setupGame();
+    game = setup.game;
+    mockClient = setup.mockClient;
+    const received: { type: number; buttons?: number; crankAngle?: number }[] =
+      [];
+    setupInputHandler(mockClient, received);
+
+    await game.waitMs(50);
+
+    expect(received).toHaveLength(0);
   });
 });

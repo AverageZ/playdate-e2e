@@ -10,13 +10,18 @@ import { resolveSnapshotDir } from './assert/resolveSnapshotDir';
 import { compareScreenshot } from './assert/Screenshot';
 import { TcpServer } from './connection/tcpServer';
 import {
+  CRANK_NO_INJECT,
   MSG_CAPTURE_FRAME,
   MSG_FRAME_DATA,
+  MSG_INJECT_INPUT,
+  MSG_INPUT_ACK,
   MSG_PING,
   MSG_PONG,
   MSG_QUERY_STATE,
+  MSG_RELEASE_INPUT,
   MSG_STATE_NOT_FOUND,
   MSG_STATE_VALUE,
+  PlaydateButton,
   StateType,
 } from './types';
 
@@ -39,6 +44,7 @@ export class PlaydateGame {
   private server: TcpServer;
   private timeout: number;
   private queryInFlight = false;
+  private lastCrankAngle: number = CRANK_NO_INJECT;
 
   private constructor(server: TcpServer, timeout: number) {
     this.server = server;
@@ -399,6 +405,98 @@ export class PlaydateGame {
         previous = current;
       }
     }
+  }
+
+  // --- Input helpers ---
+
+  /** Press the A button. */
+  async pressA(): Promise<void> {
+    await this.pressButtons(PlaydateButton.A);
+  }
+
+  /** Press the B button. */
+  async pressB(): Promise<void> {
+    await this.pressButtons(PlaydateButton.B);
+  }
+
+  /** Press D-pad up. */
+  async dpadUp(): Promise<void> {
+    await this.pressButtons(PlaydateButton.Up);
+  }
+
+  /** Press D-pad down. */
+  async dpadDown(): Promise<void> {
+    await this.pressButtons(PlaydateButton.Down);
+  }
+
+  /** Press D-pad left. */
+  async dpadLeft(): Promise<void> {
+    await this.pressButtons(PlaydateButton.Left);
+  }
+
+  /** Press D-pad right. */
+  async dpadRight(): Promise<void> {
+    await this.pressButtons(PlaydateButton.Right);
+  }
+
+  /** Press an arbitrary combination of buttons. */
+  async pressButtons(...buttons: PlaydateButton[]): Promise<void> {
+    if (buttons.length === 0) {
+      throw new Error('pressButtons requires at least one button');
+    }
+
+    let bitmask = 0;
+    for (const b of buttons) {
+      bitmask |= b;
+    }
+
+    await this.sendAndWait(
+      {
+        buttons: bitmask,
+        crankAngle: this.lastCrankAngle,
+        type: MSG_INJECT_INPUT,
+      },
+      MSG_INPUT_ACK,
+    );
+  }
+
+  /** Set the crank to an absolute angle (degrees). Angles are sent as-is — no normalization to [0, 360). */
+  async setCrank(angle: number): Promise<void> {
+    await this.sendAndWait(
+      { buttons: 0, crankAngle: angle, type: MSG_INJECT_INPUT },
+      MSG_INPUT_ACK,
+    );
+    this.lastCrankAngle = angle;
+  }
+
+  /** Rotate the crank by a delta (degrees) from the last sent angle. No normalization — angles accumulate. */
+  async rotateCrank(delta: number): Promise<void> {
+    const base =
+      this.lastCrankAngle === CRANK_NO_INJECT ? 0 : this.lastCrankAngle;
+    const newAngle = base + delta;
+    await this.sendAndWait(
+      { buttons: 0, crankAngle: newAngle, type: MSG_INJECT_INPUT },
+      MSG_INPUT_ACK,
+    );
+    this.lastCrankAngle = newAngle;
+  }
+
+  /** Release all injected input (buttons and crank). */
+  async releaseInput(): Promise<void> {
+    await this.sendAndWait({ type: MSG_RELEASE_INPUT }, MSG_INPUT_ACK);
+    this.lastCrankAngle = CRANK_NO_INJECT;
+  }
+
+  /** Press a button, hold for `holdFrames` frames, then release all injected input (including any active crank angle). */
+  async tap(button: PlaydateButton, holdFrames: number = 1): Promise<void> {
+    await this.pressButtons(button);
+    await this.waitFrames(holdFrames);
+    await this.releaseInput();
+  }
+
+  /** Wait for a duration in milliseconds (real time, not frame-synced). */
+  async waitMs(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /** Send a protocol message and wait for a response of the expected type. */
